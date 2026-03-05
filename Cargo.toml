@@ -1,0 +1,13 @@
+[package]
+name = "stella-typechecker"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+lalrpop-util = "0.23"
+
+[build-dependencies]
+lalrpop = "0.23"
+
+[workspace]
