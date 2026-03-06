@@ -1,0 +1,735 @@
+// Stella grammar for LALRPOP 0.23
+// --------------------------------------------------
+// All grammar levels (Expr, Expr1…Expr7, Type…Type3,
+// Pattern) are collapsed into flat Rust enums defined
+// in src/ast.rs; the precedence hierarchy is re-encoded
+// here with separate non-terminals.
+
+use std::str::FromStr;
+use crate::ast::*;
+
+grammar;
+
+// ===========================================================================
+// Lexer configuration
+// ===========================================================================
+// List order matters: earlier entries have higher priority.
+// String literals always beat regex patterns when both match (longest match).
+
+match {
+    // ── Whitespace & comments (discard) ──────────────────────────────────
+    r"\s+"                                  => { },
+    r"//[^\n\r]*"                           => { },
+    // Block comments (non-nested)
+    r"/\*([^*]|\*[^/])*\*/"                => { },
+
+    // ── Compound identifiers (must precede bare identifier regex) ─────────
+    "List::head",
+    "List::isempty",
+    "List::tail",
+    "Nat::pred",
+    "Nat::iszero",
+    "Nat::rec",
+
+    // ── Keywords that share a prefix with identifiers ─────────────────────
+    "language",
+    "core",
+    "extend",
+    "with",
+    "fn",
+    "generic",
+    "type",
+    "exception",
+    "variant",
+    "inline",
+    "return",
+    "throws",
+    "forall",
+    "Bool",
+    "Nat",
+    "Unit",
+    "Top",
+    "Bot",
+    "auto",
+    "true",
+    "false",
+    "unit",
+    "if",
+    "then",
+    "else",
+    "let",
+    "letrec",
+    "in",
+    "match",
+    "inl",
+    "inr",
+    "succ",
+    "not",
+    "or",
+    "and",
+    "new",
+    "fix",
+    "fold",
+    "unfold",
+    "try",
+    "catch",
+    "cast",
+    "as",
+    "throw",
+    // panic! contains '!' which is valid in StellaIdent, so must come first
+    "panic!",
+    "cons",
+    // µ is the recursive-type binder
+    "µ",
+
+    // ── Multi-char operators (must precede single-char versions) ──────────
+    // "=>" must come before "=" and ">" to avoid being parsed as two tokens
+    "=>",
+    "<|",
+    "|>",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    ":=",
+    "->",
+
+    // ── Single-char punctuation / operators ───────────────────────────────
+    ":",
+    "=",
+    ".",
+    ",",
+    ";",
+    "(",
+    ")",
+    "{",
+    "}",
+    "[",
+    "]",
+    "+",
+    "-",
+    "*",
+    "/",
+    "<",
+    ">",
+    "&",
+    "|",
+
+    // ── Identifier-like tokens ────────────────────────────────────────────
+    // StellaIdent: starts with letter|'_', continues with letter|digit|_|-|!|?|:
+    r"[a-zA-Z_][a-zA-Z0-9_\-!?:]*" => Ident,
+
+    // Integer literal
+    r"[0-9]+"                        => IntLit,
+
+    // Memory address:  <0xDEAD>
+    r"<0x[0-9a-fA-F]+>"              => MemAddr,
+
+    // Extension name:  #feature-name
+    r"#[a-zA-Z_\-0-9]+"             => ExtName,
+
+    _
+}
+
+// ===========================================================================
+// Utility macros
+// ===========================================================================
+
+// Zero-or-more items separated by commas.
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <last:T> => { v.push(last); v },
+    => vec![],
+};
+
+// One-or-more items separated by commas.
+Comma1<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <last:T> => { v.push(last); v },
+};
+
+// ===========================================================================
+// Identifiers
+// ===========================================================================
+
+// Plain identifier (no keywords).  Safe to use anywhere without shift/reduce
+// conflicts because all keywords lex as distinct token types.
+StellaIdent: String = <s:Ident> => s.to_owned();
+
+// A broader identifier that also accepts keywords which commonly appear as
+// variant-field or record-field labels (e.g.  <| cons : T |> ).
+// Only use this in unambiguous label positions inside <|…|>  and  {…}.
+FieldName: String = {
+    <s:Ident>    => s.to_owned(),
+    "cons"       => "cons".to_owned(),
+    "inl"        => "inl".to_owned(),
+    "inr"        => "inr".to_owned(),
+    "true"       => "true".to_owned(),
+    "false"      => "false".to_owned(),
+    "unit"       => "unit".to_owned(),
+    "succ"       => "succ".to_owned(),
+    "fold"       => "fold".to_owned(),
+    "unfold"     => "unfold".to_owned(),
+    "fix"        => "fix".to_owned(),
+    "not"        => "not".to_owned(),
+    "or"         => "or".to_owned(),
+    "and"        => "and".to_owned(),
+    "new"        => "new".to_owned(),
+    "match"      => "match".to_owned(),
+    "if"         => "if".to_owned(),
+    "let"        => "let".to_owned(),
+    "fn"         => "fn".to_owned(),
+    "generic"    => "generic".to_owned(),
+    "throw"      => "throw".to_owned(),
+    "try"        => "try".to_owned(),
+    "catch"      => "catch".to_owned(),
+    "with"       => "with".to_owned(),
+    "cast"       => "cast".to_owned(),
+    "as"         => "as".to_owned(),
+    "in"         => "in".to_owned(),
+    "type"       => "type".to_owned(),
+    "variant"    => "variant".to_owned(),
+};
+
+// ============================================================================
+// TYPES
+// ===========================================================================
+//
+// Precedence (loosest → tightest):
+//   Type  ::= TypeFun | TypeForAll | TypeRec | TypeAuto | Type1
+//   Type1 ::= Type2 "+" Type2  |  Type2
+//   Type2 ::= Tuple | Record | Variant | List | Type3
+//   Type3 ::= Bool | Nat | Unit | Top | Bot | Ref | TypeVar | "(" Type ")"
+
+pub Type: Type = {
+    // fn(T1, ...) -> T
+    "fn" "(" <params:Comma<Type>> ")" "->" <ret:Type>
+        => Type::Fun(params, Box::new(ret)),
+
+    // forall X, Y. T
+    "forall" <params:Comma1<StellaIdent>> "." <body:Type>
+        => Type::ForAll(params, Box::new(body)),
+
+    // µ X . T
+    "µ" <name:StellaIdent> "." <body:Type>
+        => Type::Rec(name, Box::new(body)),
+
+    "auto" => Type::Auto,
+
+    Type1,
+};
+
+Type1: Type = {
+    // T2 + T2  (non-associative; both sides are Type2)
+    <a:Type2> "+" <b:Type2>
+        => Type::Sum(Box::new(a), Box::new(b)),
+
+    Type2,
+};
+
+Type2: Type = {
+    // {T1, T2, ...}  — tuple type   (empty {} is also tuple)
+    "{" <ts:Comma<Type>> "}"
+        => Type::Tuple(ts),
+
+    // {name: T, ...}  — record type  (used when at least one field present)
+    "{" <fields:Comma1<RecordFieldType>> "}"
+        => Type::Record(fields),
+
+    // <| variants |>
+    "<|" <variants:Comma<VariantFieldType>> "|>"
+        => Type::Variant(variants),
+
+    // [T]
+    "[" <t:Type> "]"
+        => Type::List(Box::new(t)),
+
+    Type3,
+};
+
+// Note: both TypeTuple and TypeRecord start with "{".
+// The LR(1) automaton distinguishes them by the token following the first
+// element:  "," / "}" → tuple;  ":" → record field.
+// An empty "{}" is unambiguously a tuple here.
+
+RecordFieldType: RecordFieldType = {
+    // Use FieldName so keywords (cons, inl, …) are valid field names.
+    <name:FieldName> ":" <ty:Type>
+        => RecordFieldType { name, ty },
+};
+
+VariantFieldType: VariantFieldType = {
+    // <| label : T |>   — typed variant field
+    <name:FieldName> ":" <ty:Type>
+        => VariantFieldType { name, ty: Some(ty) },
+    // <| label |>  (no type annotation)
+    <name:FieldName>
+        => VariantFieldType { name, ty: None },
+};
+
+Type3: Type = {
+    "Bool"  => Type::Bool,
+    "Nat"   => Type::Nat,
+    "Unit"  => Type::Unit,
+    "Top"   => Type::Top,
+    "Bot"   => Type::Bottom,
+
+    // &T2
+    "&" <t:Type2> => Type::Ref(Box::new(t)),
+
+    // type variable
+    <name:StellaIdent> => Type::Var(name),
+
+    "(" <t:Type> ")" => t,
+};
+
+// ===========================================================================
+// PATTERNS
+// ===========================================================================
+//
+// PatternCastAs / PatternAsc are left-recursive "postfix" operators.
+// We handle them via a separate PatternPostfix non-terminal.
+
+pub Pattern: Pattern = {
+    // p cast as T
+    <p:Pattern> "cast" "as" <t:Type>
+        => Pattern::CastAs(Box::new(p), Box::new(t)),
+
+    // p as T
+    <p:Pattern> "as" <t:Type>
+        => Pattern::Asc(Box::new(p), Box::new(t)),
+
+    PatternAtom,
+};
+
+PatternAtom: Pattern = {
+    // <| label |>  or  <| label = p |>
+    "<|" <label:StellaIdent> <data:PatternData> "|>"
+        => Pattern::Variant { label, data: data.map(Box::new) },
+
+    "inl" "(" <p:Pattern> ")"  => Pattern::Inl(Box::new(p)),
+    "inr" "(" <p:Pattern> ")"  => Pattern::Inr(Box::new(p)),
+
+    // {p1, p2, ...}  — tuple pattern
+    "{" <ps:Comma<Pattern>> "}"
+        => Pattern::Tuple(ps),
+
+    // {label = p, ...}  — record pattern
+    "{" <lps:Comma1<LabelledPattern>> "}"
+        => Pattern::Record(lps),
+
+    // [p1, p2, ...]
+    "[" <ps:Comma<Pattern>> "]"
+        => Pattern::List(ps),
+
+    // cons(p1, p2)
+    "cons" "(" <h:Pattern> "," <t:Pattern> ")"
+        => Pattern::Cons(Box::new(h), Box::new(t)),
+
+    "false"                    => Pattern::False,
+    "true"                     => Pattern::True,
+    "unit"                     => Pattern::Unit,
+    <n:IntLit>                 => Pattern::Int(u64::from_str(n).unwrap()),
+    "succ" "(" <p:Pattern> ")" => Pattern::Succ(Box::new(p)),
+    <name:StellaIdent>         => Pattern::Var(name),
+    "(" <p:Pattern> ")"        => p,
+};
+
+// Optional payload in pattern: `= Pattern` or nothing
+PatternData: Option<Pattern> = {
+    "=" <p:Pattern> => Some(p),
+    => None,
+};
+
+// `name = pattern` inside a record pattern
+LabelledPattern: LabelledPattern = {
+    <label:StellaIdent> "=" <pattern:Pattern>
+        => LabelledPattern { label, pattern },
+};
+
+// ===========================================================================
+// EXPRESSIONS
+// ===========================================================================
+//
+// Precedence (loosest → tightest):
+//   Expr  ::= Sequence | Let | LetRec | TypeAbstraction | Expr1
+//   Expr1 ::= Assign | If | Expr2
+//   Expr2 ::= comparisons (non-assoc) | Expr3
+//   Expr3 ::= Add/Sub/Or (left) | TypeAsc | TypeCast | Abstraction
+//           | Variant | Match | List | Expr4
+//   Expr4 ::= Mul/Div/And (left) | Expr5
+//   Expr5 ::= Ref | Deref | Expr6
+//   Expr6 ::= Application | TypeApplication | DotRecord | DotTuple
+//           | Tuple | Record | cons | List::* | Nat::* | …atoms… | Expr7
+//   Expr7 ::= literals | Var | "(" Expr ")"
+
+// ---------------------------------------------------------------------------
+// Match cases  (used by Match expression in Expr3)
+//
+// Explicit left-recursive rule avoids shift/reduce conflicts that arise
+// from using the generic PipeSep macro with an empty alternative.
+// ---------------------------------------------------------------------------
+
+MatchCase: MatchCase = {
+    <p:Pattern> "=>" <e:Expr>
+        => MatchCase { pattern: p, expr: e },
+};
+
+// One or more cases separated by "|", or zero cases (empty match).
+MatchCases: Vec<MatchCase> = {
+    // empty match body
+    => vec![],
+    // first case
+    <c:MatchCase>
+        => vec![c],
+    // additional cases appended left-recursively
+    <mut v:MatchCases> "|" <c:MatchCase>
+        => { v.push(c); v },
+};
+
+// ---------------------------------------------------------------------------
+// Expr  — top level
+// ---------------------------------------------------------------------------
+
+pub Expr: Expr = {
+    // e1 ; e2   (right-associative sequence; greedily consumes the rest)
+    <e1:Expr1> ";" <e2:Expr>
+        => Expr::Sequence(Box::new(e1), Box::new(e2)),
+    // e1 ;      (trailing semicolon, value of e1 is returned)
+    <e:Expr1> ";"
+        => e,
+    // let p1 = e1, … in body
+    "let" <bs:Comma1<PatternBinding>> "in" <body:Expr>
+        => Expr::Let(bs, Box::new(body)),
+    // letrec p1 = e1, … in body
+    "letrec" <bs:Comma1<PatternBinding>> "in" <body:Expr>
+        => Expr::LetRec(bs, Box::new(body)),
+    // generic [T1, …] body
+    "generic" "[" <params:Comma<StellaIdent>> "]" <body:Expr>
+        => Expr::TypeAbstraction(params, Box::new(body)),
+
+    Expr1,
+};
+
+// `p = e` inside let / letrec
+PatternBinding: PatternBinding = {
+    <p:Pattern> "=" <e:Expr>
+        => PatternBinding { pattern: p, expr: e },
+};
+
+// ---------------------------------------------------------------------------
+// Expr1  — assignment and if-then-else
+// ---------------------------------------------------------------------------
+
+Expr1: Expr = {
+    // lhs := rhs  (right-assoc: rhs is Expr1)
+    <lhs:Expr2> ":=" <rhs:Expr1>
+        => Expr::Assign(Box::new(lhs), Box::new(rhs)),
+    // if c then t else e
+    "if" <c:Expr1> "then" <t:Expr1> "else" <e:Expr1>
+        => Expr::If { cond: Box::new(c), then_: Box::new(t), else_: Box::new(e) },
+
+    Expr2,
+};
+
+// ---------------------------------------------------------------------------
+// Expr2  — non-associative comparisons
+// ---------------------------------------------------------------------------
+
+Expr2: Expr = {
+    <a:Expr3> "<"  <b:Expr3> => Expr::LessThan(Box::new(a), Box::new(b)),
+    <a:Expr3> "<=" <b:Expr3> => Expr::LessThanOrEqual(Box::new(a), Box::new(b)),
+    <a:Expr3> ">"  <b:Expr3> => Expr::GreaterThan(Box::new(a), Box::new(b)),
+    <a:Expr3> ">=" <b:Expr3> => Expr::GreaterThanOrEqual(Box::new(a), Box::new(b)),
+    <a:Expr3> "==" <b:Expr3> => Expr::Equal(Box::new(a), Box::new(b)),
+    <a:Expr3> "!=" <b:Expr3> => Expr::NotEqual(Box::new(a), Box::new(b)),
+
+    Expr3,
+};
+
+// ---------------------------------------------------------------------------
+// Expr3  — additive / logical-or / type-ascription / special forms
+// ---------------------------------------------------------------------------
+
+Expr3: Expr = {
+    <l:Expr3> "+"   <r:Expr4>       => Expr::Add(Box::new(l), Box::new(r)),
+    <l:Expr3> "-"   <r:Expr4>       => Expr::Subtract(Box::new(l), Box::new(r)),
+    <l:Expr3> "or"  <r:Expr4>       => Expr::LogicOr(Box::new(l), Box::new(r)),
+    // e as T2
+    <e:Expr3> "as"       <t:Type2>  => Expr::TypeAsc(Box::new(e), Box::new(t)),
+    // e cast as T2
+    <e:Expr3> "cast" "as" <t:Type2> => Expr::TypeCast(Box::new(e), Box::new(t)),
+
+    // fn(params) { return body }
+    "fn" "(" <params:Comma<ParamDecl>> ")" "{" "return" <body:Expr> "}"
+        => Expr::Abstraction { params, body: Box::new(body) },
+
+    // <| label |>  or  <| label = e |>
+    "<|" <label:StellaIdent> <payload:ExprData> "|>"
+        => Expr::Variant { label, payload: payload.map(Box::new) },
+
+    // match e { cases }
+    "match" <e:Expr2> "{" <cases:MatchCases> "}"
+        => Expr::Match { expr: Box::new(e), cases },
+
+    // [e1, e2, …]
+    "[" <items:Comma<Expr>> "]"
+        => Expr::List(items),
+
+    Expr4,
+};
+
+// Optional expression payload inside a variant literal or record
+ExprData: Option<Expr> = {
+    "=" <e:Expr> => Some(e),
+    => None,
+};
+
+// ---------------------------------------------------------------------------
+// Expr4  — multiplicative / logical-and
+// ---------------------------------------------------------------------------
+
+Expr4: Expr = {
+    <l:Expr4> "*"   <r:Expr5> => Expr::Multiply(Box::new(l), Box::new(r)),
+    <l:Expr4> "/"   <r:Expr5> => Expr::Divide(Box::new(l), Box::new(r)),
+    <l:Expr4> "and" <r:Expr5> => Expr::LogicAnd(Box::new(l), Box::new(r)),
+
+    Expr5,
+};
+
+// ---------------------------------------------------------------------------
+// Expr5  — reference / dereference
+// ---------------------------------------------------------------------------
+
+Expr5: Expr = {
+    "new" "(" <e:Expr> ")" => Expr::Ref(Box::new(e)),
+    "*" <e:Expr5>          => Expr::Deref(Box::new(e)),
+
+    Expr6,
+};
+
+// ---------------------------------------------------------------------------
+// Expr6  — left-recursive postfix ops and all compound Expr6 forms
+// ---------------------------------------------------------------------------
+
+Expr6: Expr = {
+    // f(args)
+    <f:Expr6> "(" <args:Comma<Expr>> ")"
+        => Expr::Application { func: Box::new(f), args },
+
+    // e[T1, T2, …]
+    <e:Expr6> "[" <ts:Comma<Type>> "]"
+        => Expr::TypeApplication { expr: Box::new(e), type_args: ts },
+
+    // e.fieldName
+    <e:Expr6> "." <name:StellaIdent>
+        => Expr::DotRecord(Box::new(e), name),
+
+    // e.0
+    <e:Expr6> "." <n:IntLit>
+        => Expr::DotTuple(Box::new(e), u64::from_str(n).unwrap()),
+
+    // {e1, e2, …}  — tuple expression
+    // LR(1) disambiguation: if first element is `Ident "="`, use Record rule.
+    "{" <items:Comma<Expr>> "}"
+        => Expr::Tuple(items),
+
+    // {name = e, …}  — record expression
+    "{" <bindings:Comma1<Binding>> "}"
+        => Expr::Record(bindings),
+
+    // cons(head, tail)
+    "cons" "(" <h:Expr> "," <t:Expr> ")"
+        => Expr::ConsList(Box::new(h), Box::new(t)),
+
+    // List built-ins
+    "List::head"    "(" <e:Expr> ")" => Expr::Head(Box::new(e)),
+    "List::isempty" "(" <e:Expr> ")" => Expr::IsEmpty(Box::new(e)),
+    "List::tail"    "(" <e:Expr> ")" => Expr::Tail(Box::new(e)),
+
+    "panic!" => Expr::Panic,
+
+    "throw" "(" <e:Expr> ")" => Expr::Throw(Box::new(e)),
+
+    // try { e } catch { p => handler }
+    "try" "{" <body:Expr> "}" "catch" "{" <p:Pattern> "=>" <handler:Expr> "}"
+        => Expr::TryCatch {
+            try_expr:   Box::new(body),
+            pattern:    Box::new(p),
+            catch_expr: Box::new(handler),
+        },
+
+    // try { e } with { fallback }
+    "try" "{" <body:Expr> "}" "with" "{" <fallback:Expr> "}"
+        => Expr::TryWith { try_expr: Box::new(body), with_expr: Box::new(fallback) },
+
+    // try { e } cast as T { p => handler } with { fallback }
+    "try" "{" <body:Expr> "}" "cast" "as" <ty:Type>
+        "{" <p:Pattern> "=>" <handler:Expr> "}"
+        "with" "{" <fallback:Expr> "}"
+        => Expr::TryCastAs {
+            try_expr:   Box::new(body),
+            ty:         Box::new(ty),
+            pattern:    Box::new(p),
+            catch_expr: Box::new(handler),
+            with_expr:  Box::new(fallback),
+        },
+
+    "inl"  "(" <e:Expr> ")" => Expr::Inl(Box::new(e)),
+    "inr"  "(" <e:Expr> ")" => Expr::Inr(Box::new(e)),
+    "succ" "(" <e:Expr> ")" => Expr::Succ(Box::new(e)),
+    "not"  "(" <e:Expr> ")" => Expr::LogicNot(Box::new(e)),
+
+    "Nat::pred"   "(" <e:Expr> ")" => Expr::Pred(Box::new(e)),
+    "Nat::iszero" "(" <e:Expr> ")" => Expr::IsZero(Box::new(e)),
+
+    "fix" "(" <e:Expr> ")" => Expr::Fix(Box::new(e)),
+
+    "Nat::rec" "(" <n:Expr> "," <z:Expr> "," <s:Expr> ")"
+        => Expr::NatRec(Box::new(n), Box::new(z), Box::new(s)),
+
+    // fold[T] e7
+    "fold"   "[" <ty:Type> "]" <e:Expr7>
+        => Expr::Fold   { ty: Box::new(ty), expr: Box::new(e) },
+    // unfold[T] e7
+    "unfold" "[" <ty:Type> "]" <e:Expr7>
+        => Expr::Unfold { ty: Box::new(ty), expr: Box::new(e) },
+
+    Expr7,
+};
+
+// `name = expr` inside a record expression literal
+Binding: Binding = {
+    <name:StellaIdent> "=" <expr:Expr>
+        => Binding { name, expr },
+};
+
+// ---------------------------------------------------------------------------
+// Expr7  — atoms
+// ---------------------------------------------------------------------------
+
+Expr7: Expr = {
+    "true"              => Expr::ConstTrue,
+    "false"             => Expr::ConstFalse,
+    "unit"              => Expr::ConstUnit,
+    <n:IntLit>          => Expr::ConstInt(u64::from_str(n).unwrap()),
+    <m:MemAddr>         => Expr::ConstMemory(m.to_owned()),
+    <name:StellaIdent>  => Expr::Var(name),
+    "(" <e:Expr> ")"    => e,
+};
+
+// ===========================================================================
+// DECLARATIONS & PROGRAM
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Annotations
+// ---------------------------------------------------------------------------
+
+Annotation: Annotation = {
+    "inline" => Annotation::Inline,
+};
+
+// ---------------------------------------------------------------------------
+// Parameter and return/throw type annotations
+// ---------------------------------------------------------------------------
+
+ParamDecl: ParamDecl = {
+    <name:StellaIdent> ":" <ty:Type>
+        => ParamDecl { name, ty },
+};
+
+ReturnType: ReturnType = {
+    "->" <t:Type> => ReturnType::SomeReturn(Box::new(t)),
+    =>             ReturnType::NoReturn,
+};
+
+ThrowType: ThrowType = {
+    "throws" <ts:Comma1<Type>> => ThrowType::SomeThrow(ts),
+    =>                            ThrowType::NoThrow,
+};
+
+// ---------------------------------------------------------------------------
+// Local declarations inside a function body (terminates at "return")
+// ---------------------------------------------------------------------------
+
+LocalDecls: Vec<Decl> = {
+    => vec![],
+    <mut v:LocalDecls> <d:Decl> => { v.push(d); v },
+};
+
+// ---------------------------------------------------------------------------
+// Top-level / local declaration
+// ---------------------------------------------------------------------------
+
+pub Decl: Decl = {
+    // [inline] fn name(params) [-> T] [throws T,…] { decls… return body }
+    <anns:Annotation*>
+    "fn" <name:StellaIdent>
+    "(" <params:Comma<ParamDecl>> ")"
+    <ret:ReturnType> <throws:ThrowType>
+    "{" <locals:LocalDecls> "return" <body:Expr> "}"
+        => Decl::Fun(DeclFun {
+            annotations: anns,
+            name,
+            params,
+            return_type: ret,
+            throw_type:  throws,
+            local_decls: locals,
+            body:        Box::new(body),
+        }),
+
+    // [inline] generic fn name[T,…](params) [-> T] [throws T,…] { decls… return body }
+    <anns:Annotation*>
+    "generic" "fn" <name:StellaIdent>
+    "[" <tparams:Comma<StellaIdent>> "]"
+    "(" <params:Comma<ParamDecl>> ")"
+    <ret:ReturnType> <throws:ThrowType>
+    "{" <locals:LocalDecls> "return" <body:Expr> "}"
+        => Decl::FunGeneric(DeclFunGeneric {
+            annotations: anns,
+            name,
+            type_params: tparams,
+            params,
+            return_type: ret,
+            throw_type:  throws,
+            local_decls: locals,
+            body:        Box::new(body),
+        }),
+
+    // type Alias = Type
+    "type" <name:StellaIdent> "=" <ty:Type>
+        => Decl::TypeAlias { name, ty },
+
+    // exception type = Type
+    "exception" "type" "=" <ty:Type>
+        => Decl::ExceptionType { ty },
+
+    // exception variant Name : Type
+    "exception" "variant" <name:StellaIdent> ":" <ty:Type>
+        => Decl::ExceptionVariant { name, ty },
+};
+
+// ---------------------------------------------------------------------------
+// Extensions   extend with #feat1, #feat2 ;
+// ---------------------------------------------------------------------------
+
+ExtName_: String = <s:ExtName> => s.to_owned();
+
+Extension: Extension = {
+    "extend" "with" <names:Comma1<ExtName_>> ";"
+        => Extension { names },
+};
+
+// ---------------------------------------------------------------------------
+// Program  (the grammar's start symbol)
+// ---------------------------------------------------------------------------
+
+pub Program: Program = {
+    "language" "core" ";" <exts:Extension*> <decls:Decl*>
+        => Program {
+            language_decl: LanguageDecl,
+            extensions:    exts,
+            decls,
+        },
+};
+
+
