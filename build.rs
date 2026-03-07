@@ -1,5 +1,10 @@
 fn main() {
-    println!("cargo:rerun-if-changed=src/stella.lalrpop");
-    // Process any .lalrpop files found under the crate root.
-    lalrpop::process_root().unwrap();
+    println!("cargo:rerun-if-changed=grammar/stella.lalrpop");
+    // Process the lalrpop grammar file in the grammar directory.
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    lalrpop::Configuration::new()
+        .set_in_dir("grammar")
+        .set_out_dir(&out_dir)
+        .process()
+        .unwrap();
 }

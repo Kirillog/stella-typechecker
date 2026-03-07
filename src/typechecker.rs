@@ -28,18 +28,9 @@ impl Context {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Structural type equality
-// ---------------------------------------------------------------------------
-
-/// Deep structural equality — no subtyping.
 pub fn types_equal(t1: &Type, t2: &Type) -> bool {
     return t1 == &Type::Auto || t2 == &Type::Auto || t1 == t2;
 }
-
-// ---------------------------------------------------------------------------
-// Expression inference
-// ---------------------------------------------------------------------------
 
 pub struct TypeChecker {
     errors: Vec<TypeError>,
@@ -48,10 +39,6 @@ pub struct TypeChecker {
 impl TypeChecker {
     pub fn new() -> Self {
         Self { errors: Vec::new() }
-    }
-
-    pub fn get_errors(self) -> Vec<TypeError> {
-        self.errors
     }
 
     pub fn assert_types_equal(&mut self, expected: &Type, got: &Type) {
@@ -394,7 +381,7 @@ impl TypeChecker {
                     }
                     let mut local_ctx = ctx.clone();
                     for (param, expected_param_ty) in params.iter().zip(param_types) {
-                        if param.ty != Type::Auto {
+                        if param.ty != *expected_param_ty {
                             self.errors.push(TypeError::UnexpectedTypeForParameter {
                                 param: param.name.clone(),
                                 expected: expected_param_ty.clone(),
