@@ -327,7 +327,7 @@ PatternAtom: Pattern = {
     "false"                    => Pattern::False,
     "true"                     => Pattern::True,
     "unit"                     => Pattern::Unit,
-    <n:IntLit>                 => Pattern::Int(u64::from_str(n).unwrap()),
+    <n:IntLit>                 => Pattern::Int(usize::from_str(n).unwrap()),
     "succ" "(" <p:Pattern> ")" => Pattern::Succ(Box::new(p)),
     <name:StellaIdent>         => Pattern::Var(name),
     "(" <p:Pattern> ")"        => p,
@@ -525,7 +525,7 @@ Expr6: Expr = {
 
     // e.0
     <e:Expr6> "." <n:IntLit>
-        => Expr::DotTuple(Box::new(e), u64::from_str(n).unwrap()),
+        => Expr::DotTuple(Box::new(e), usize::from_str(n).unwrap()),
 
     // {e1, e2, …}  — tuple expression
     // LR(1) disambiguation: if first element is `Ident "="`, use Record rule.
@@ -610,7 +610,7 @@ Expr7: Expr = {
     "true"              => Expr::ConstTrue,
     "false"             => Expr::ConstFalse,
     "unit"              => Expr::ConstUnit,
-    <n:IntLit>          => Expr::ConstInt(u64::from_str(n).unwrap()),
+    <n:IntLit>          => Expr::ConstInt(usize::from_str(n).unwrap()),
     <m:MemAddr>         => Expr::ConstMemory(m.to_owned()),
     <name:StellaIdent>  => Expr::Var(name),
     "(" <e:Expr> ")"    => e,

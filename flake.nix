@@ -12,7 +12,7 @@
         pkgs = import nixpkgs { inherit system; };
       in {
         devShell = pkgs.mkShell {
-          buildInputs = [ pkgs.rustc pkgs.cargo pkgs.rust-analyzer ];
+          buildInputs = [ pkgs.rustc pkgs.cargo pkgs.rust-analyzer pkgs.rustfmt ];
         };
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "stella-typechecker";

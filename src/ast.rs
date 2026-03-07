@@ -24,17 +24,9 @@ pub struct Extension {
 pub enum Decl {
     Fun(DeclFun),
     FunGeneric(DeclFunGeneric),
-    TypeAlias {
-        name: String,
-        ty: Type,
-    },
-    ExceptionType {
-        ty: Type,
-    },
-    ExceptionVariant {
-        name: String,
-        ty: Type,
-    },
+    TypeAlias { name: String, ty: Type },
+    ExceptionType { ty: Type },
+    ExceptionVariant { name: String, ty: Type },
 }
 
 /// `[annotations] fn name(params) return_type throw_type { local_decls return body }`
@@ -77,6 +69,15 @@ pub struct ParamDecl {
 pub enum ReturnType {
     NoReturn,
     SomeReturn(Box<Type>),
+}
+
+impl ReturnType {
+    pub fn as_type(&self) -> &Type {
+        match self {
+            ReturnType::NoReturn => &Type::Unit,
+            ReturnType::SomeReturn(ty) => ty.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -170,7 +171,7 @@ pub enum Expr {
     /// `e.fieldname`
     DotRecord(Box<Expr>, String),
     /// `e.0`
-    DotTuple(Box<Expr>, u64),
+    DotTuple(Box<Expr>, usize),
     /// `{e1, e2, ...}`
     Tuple(Vec<Expr>),
     /// `{field1 = e1, ...}`
@@ -237,7 +238,7 @@ pub enum Expr {
     ConstTrue,
     ConstFalse,
     ConstUnit,
-    ConstInt(u64),
+    ConstInt(usize),
     /// `<0xDEADBEEF>`
     ConstMemory(String),
     /// An identifier reference
@@ -274,7 +275,7 @@ pub enum Pattern {
     False,
     True,
     Unit,
-    Int(u64),
+    Int(usize),
     /// `succ(p)`
     Succ(Box<Pattern>),
     /// An identifier (variable binding)
@@ -285,7 +286,7 @@ pub enum Pattern {
 // Types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     /// `auto`
     Auto,
@@ -348,14 +349,14 @@ pub struct LabelledPattern {
 }
 
 /// `name : T` inside a record type
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordFieldType {
     pub name: String,
     pub ty: Type,
 }
 
 /// `name : T` or just `name` inside a variant type
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VariantFieldType {
     pub name: String,
     pub ty: Option<Type>,
