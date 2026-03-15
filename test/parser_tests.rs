@@ -468,7 +468,7 @@ fn test_type_unit() {
 
 #[test]
 fn test_type_fun() {
-    assert!(matches!(parse_type("fn(Nat) -> Nat"), Type::Fun(_, _)));
+    assert!(matches!(parse_type("fn(Nat) -> Nat"), Type::Fun(params, return_type) if params == vec![Type::Nat] && *return_type == Type::Nat));
 }
 
 #[test]
