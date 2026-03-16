@@ -1,9 +1,9 @@
-use crate::stella;
-use crate::type_error::TypeError;
-use crate::typechecker::TypeChecker;
+use stella_typechecker::parser;
+use stella_typechecker::type_error::TypeError;
+use stella_typechecker::typechecker::TypeChecker;
 
 fn typecheck(src: &str) -> Vec<TypeError> {
-    let prog = stella::ProgramParser::new()
+    let prog = parser::ProgramParser::new()
         .parse(src)
         .expect("parse failed");
     TypeChecker::new().check_program(&prog)
@@ -537,7 +537,10 @@ fn test_error_nonexhaustive_match_sum_missing_inl() {
         "language core; fn main(n : Nat + Bool) -> Nat { return match n { inr(b) => 0 } }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -548,7 +551,10 @@ fn test_error_nonexhaustive_match_sum_missing_inr() {
         "language core; fn main(n : Nat + Bool) -> Nat { return match n { inl(x) => x } }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -560,29 +566,35 @@ fn test_error_nonexhaustive_match_variant() {
          { return match n { <| a = x |> => x } }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
 
 #[test]
 fn test_error_nonexhaustive_match_nat_missing_zero() {
-    let errors = typecheck(
-        "language core; fn main(n : Nat) -> Nat { return match n { succ(x) => x } }",
-    );
+    let errors =
+        typecheck("language core; fn main(n : Nat) -> Nat { return match n { succ(x) => x } }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
 
 #[test]
 fn test_error_nonexhaustive_match_nat_missing_succ() {
-    let errors = typecheck(
-        "language core; fn main(n : Nat) -> Nat { return match n { 0 => 0 } }",
-    );
+    let errors = typecheck("language core; fn main(n : Nat) -> Nat { return match n { 0 => 0 } }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -593,40 +605,48 @@ fn test_error_nonexhaustive_match_list_missing_nil() {
         "language core; fn main(n : [Nat]) -> Nat { return match n { cons(x, xs) => x } }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
 
 #[test]
 fn test_error_nonexhaustive_match_list_missing_cons() {
-    let errors = typecheck(
-        "language core; fn main(n : [Nat]) -> Nat { return match n { [] => 0 } }",
-    );
+    let errors =
+        typecheck("language core; fn main(n : [Nat]) -> Nat { return match n { [] => 0 } }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
 
 #[test]
 fn test_nonexhaustive_match_catchall_covers_bool() {
-    let errors = typecheck(
-        "language core; fn main(n : Bool) -> Nat { return match n { x => 0 } }",
-    );
+    let errors = typecheck("language core; fn main(n : Bool) -> Nat { return match n { x => 0 } }");
     assert!(
-        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
 
 #[test]
 fn test_nonexhaustive_match_catchall_covers_sum() {
-    let errors = typecheck(
-        "language core; fn main(n : Nat + Bool) -> Nat { return match n { x => 0 } }",
-    );
+    let errors =
+        typecheck("language core; fn main(n : Nat + Bool) -> Nat { return match n { x => 0 } }");
     assert!(
-        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -637,7 +657,10 @@ fn test_exhaustive_match_bool_with_both_branches() {
         "language core; fn main(n : Bool) -> Nat { return match n { true => 1 | false => 0 } }",
     );
     assert!(
-        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -648,7 +671,10 @@ fn test_exhaustive_match_nat_zero_and_succ() {
         "language core; fn main(n : Nat) -> Nat { return match n { 0 => 0 | succ(k) => k } }",
     );
     assert!(
-        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -659,7 +685,10 @@ fn test_exhaustive_match_variant_all_labels() {
         "language core; fn main(n : <| none, some : Nat |>) -> Nat { return match n { <| none |> => 0 | <| some = x |> => x } }",
     );
     assert!(
-        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
 }
@@ -670,7 +699,10 @@ fn test_nonexhaustive_match_tuple_reports_missing_witness() {
         "language core; fn main(n : {Bool, Bool}) -> Nat { return match n { {true, x} => 1 | {false, true} => 2 } }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
     let missing = missing_witnesses(&errors).expect("expected missing witness list");
@@ -687,7 +719,10 @@ fn test_nonexhaustive_match_record_reports_missing_witness() {
         "language core; fn main(n : {x : Bool, y : Bool}) -> Nat { return match n { {x = true, y = b} => 1 | {x = false, y = true} => 2 } }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
         "expected NonexhaustiveMatchPatterns, got: {errors:?}"
     );
     let missing = missing_witnesses(&errors).expect("expected missing witness list");

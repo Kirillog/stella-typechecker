@@ -24,7 +24,4 @@ On success, the tool prints `Type OK` to stdout and exits 0. Type errors are pri
 ```bash
 # Full test matrix (unit + Stage 1 suite via integrated test)
 cargo test --all-targets
-
-# Or run the suite runner directly (honors $CARGO_TARGET_DIR, builds if missing)
-cargo run --bin run_suite --
 ```

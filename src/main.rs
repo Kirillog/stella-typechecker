@@ -1,8 +1,4 @@
-mod ast;
-mod type_error;
-mod typechecker;
-
-lalrpop_util::lalrpop_mod!(pub stella);
+use stella_typechecker::{parser, typechecker};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -15,7 +11,7 @@ fn main() {
         std::process::exit(1);
     });
 
-    let program = match stella::ProgramParser::new().parse(&src) {
+    let program = match parser::ProgramParser::new().parse(&src) {
         Ok(program) => program,
         Err(e) => {
             eprintln!("Parse error: {e}");
@@ -32,14 +28,4 @@ fn main() {
         }
         std::process::exit(2);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    include!("../test/parser_tests.rs");
-}
-
-#[cfg(test)]
-mod typechecker_tests {
-    include!("../test/typechecker_tests.rs");
 }

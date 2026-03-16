@@ -1,5 +1,5 @@
 fn main() {
-    println!("cargo:rerun-if-changed=grammar/stella.lalrpop");
+    println!("cargo:rerun-if-changed=grammar/parser.lalrpop");
     // Process the lalrpop grammar file in the grammar directory.
     let out_dir = std::env::var("OUT_DIR").unwrap();
     lalrpop::Configuration::new()

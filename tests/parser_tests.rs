@@ -1,25 +1,30 @@
-use crate::ast::*;
-use crate::stella;
+use stella_typechecker::ast::*;
+use stella_typechecker::parser;
 
 fn parse_expr(src: &str) -> Expr {
-    stella::ExprParser::new().parse(src).expect("expression parse failed")
+    parser::ExprParser::new()
+        .parse(src)
+        .expect("expression parse failed")
 }
 
 fn parse_type(src: &str) -> Type {
-    stella::TypeParser::new().parse(src).expect("type parse failed")
+    parser::TypeParser::new()
+        .parse(src)
+        .expect("type parse failed")
 }
 
 fn parse_program(src: &str) -> Program {
-    stella::ProgramParser::new().parse(src).expect("program parse failed")
+    parser::ProgramParser::new()
+        .parse(src)
+        .expect("program parse failed")
 }
 
 fn parse_expr_err(src: &str) {
-    assert!(stella::ExprParser::new().parse(src).is_err(), "expected parse error for: {src}");
+    assert!(
+        parser::ExprParser::new().parse(src).is_err(),
+        "expected parse error for: {src}"
+    );
 }
-
-// -----------------------------------------------------------------------
-// Program-level tests
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_minimal_program() {
@@ -50,10 +55,6 @@ fn test_program_multiple_fns() {
     assert_eq!(prog.decls.len(), 2);
 }
 
-// -----------------------------------------------------------------------
-// Literal expressions
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_const_true() {
     assert!(matches!(parse_expr("true"), Expr::ConstTrue));
@@ -79,10 +80,6 @@ fn test_var() {
     assert!(matches!(parse_expr("x"), Expr::Var(ref s) if s == "x"));
 }
 
-// -----------------------------------------------------------------------
-// Arithmetic expressions
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_addition() {
     assert!(matches!(parse_expr("1 + 2"), Expr::Add(_, _)));
@@ -105,7 +102,6 @@ fn test_division() {
 
 #[test]
 fn test_add_left_assoc() {
-    // 1 + 2 + 3  should parse as  (1 + 2) + 3
     match parse_expr("1 + 2 + 3") {
         Expr::Add(lhs, _) => assert!(matches!(*lhs, Expr::Add(_, _))),
         _ => panic!("expected Add"),
@@ -114,16 +110,11 @@ fn test_add_left_assoc() {
 
 #[test]
 fn test_mul_higher_prec_than_add() {
-    // 1 + 2 * 3  should parse as  1 + (2 * 3)
     match parse_expr("1 + 2 * 3") {
         Expr::Add(_, rhs) => assert!(matches!(*rhs, Expr::Multiply(_, _))),
         _ => panic!("expected Add at top level"),
     }
 }
-
-// -----------------------------------------------------------------------
-// Comparison expressions
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_less_than() {
@@ -140,10 +131,6 @@ fn test_not_equal() {
     assert!(matches!(parse_expr("a != b"), Expr::NotEqual(_, _)));
 }
 
-// -----------------------------------------------------------------------
-// Boolean / logic expressions
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_logic_or() {
     assert!(matches!(parse_expr("a or b"), Expr::LogicOr(_, _)));
@@ -159,25 +146,17 @@ fn test_logic_not() {
     assert!(matches!(parse_expr("not(x)"), Expr::LogicNot(_)));
 }
 
-// -----------------------------------------------------------------------
-// If / then / else
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_if_expr() {
     match parse_expr("if true then 1 else 0") {
         Expr::If { cond, then_, else_ } => {
-            assert!(matches!(*cond,   Expr::ConstTrue));
-            assert!(matches!(*then_,  Expr::ConstInt(1)));
-            assert!(matches!(*else_,  Expr::ConstInt(0)));
+            assert!(matches!(*cond, Expr::ConstTrue));
+            assert!(matches!(*then_, Expr::ConstInt(1)));
+            assert!(matches!(*else_, Expr::ConstInt(0)));
         }
         _ => panic!("expected If"),
     }
 }
-
-// -----------------------------------------------------------------------
-// Lambda abstraction
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_abstraction() {
@@ -199,10 +178,6 @@ fn test_abstraction_multi_param() {
     }
 }
 
-// -----------------------------------------------------------------------
-// Function application
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_application() {
     match parse_expr("f(x)") {
@@ -222,10 +197,6 @@ fn test_application_multi_args() {
     }
 }
 
-// -----------------------------------------------------------------------
-// Let expressions
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_let_expr() {
     match parse_expr("let x = 1 in x") {
@@ -236,10 +207,6 @@ fn test_let_expr() {
         _ => panic!("expected Let"),
     }
 }
-
-// -----------------------------------------------------------------------
-// Tuples and records
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_tuple() {
@@ -277,10 +244,6 @@ fn test_dot_tuple() {
     }
 }
 
-// -----------------------------------------------------------------------
-// Lists
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_empty_list() {
     assert!(matches!(parse_expr("[]"), Expr::List(ref v) if v.is_empty()));
@@ -314,10 +277,6 @@ fn test_list_isempty() {
     assert!(matches!(parse_expr("List::isempty(xs)"), Expr::IsEmpty(_)));
 }
 
-// -----------------------------------------------------------------------
-// Nat built-ins
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_succ() {
     assert!(matches!(parse_expr("succ(0)"), Expr::Succ(_)));
@@ -335,12 +294,11 @@ fn test_nat_iszero() {
 
 #[test]
 fn test_nat_rec() {
-    assert!(matches!(parse_expr("Nat::rec(n, 0, f)"), Expr::NatRec(_, _, _)));
+    assert!(matches!(
+        parse_expr("Nat::rec(n, 0, f)"),
+        Expr::NatRec(_, _, _)
+    ));
 }
-
-// -----------------------------------------------------------------------
-// Sum types: inl / inr
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_inl() {
@@ -351,10 +309,6 @@ fn test_inl() {
 fn test_inr() {
     assert!(matches!(parse_expr("inr(x)"), Expr::Inr(_)));
 }
-
-// -----------------------------------------------------------------------
-// Variant
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_variant_no_payload() {
@@ -378,10 +332,6 @@ fn test_variant_with_payload() {
     }
 }
 
-// -----------------------------------------------------------------------
-// Match
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_match_expr() {
     match parse_expr("match x { true => 1 | false => 0 }") {
@@ -390,27 +340,15 @@ fn test_match_expr() {
     }
 }
 
-// -----------------------------------------------------------------------
-// Sequence
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_sequence() {
     assert!(matches!(parse_expr("1; 2"), Expr::Sequence(_, _)));
 }
 
-// -----------------------------------------------------------------------
-// Type annotations and casts
-// -----------------------------------------------------------------------
-
 #[test]
 fn test_type_asc() {
     assert!(matches!(parse_expr("x as Nat"), Expr::TypeAsc(_, _)));
 }
-
-// -----------------------------------------------------------------------
-// Fix / fold / unfold
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_fix() {
@@ -424,12 +362,11 @@ fn test_fold() {
 
 #[test]
 fn test_unfold() {
-    assert!(matches!(parse_expr("unfold[µ X . Nat] x"), Expr::Unfold { .. }));
+    assert!(matches!(
+        parse_expr("unfold[µ X . Nat] x"),
+        Expr::Unfold { .. }
+    ));
 }
-
-// -----------------------------------------------------------------------
-// Panic / ref / deref
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_panic() {
@@ -443,13 +380,8 @@ fn test_ref() {
 
 #[test]
 fn test_deref() {
-    // *e  is syntactic sugar for dereference
     assert!(matches!(parse_expr("*x"), Expr::Deref(_)));
 }
-
-// -----------------------------------------------------------------------
-// Type parsing
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_type_nat() {
@@ -468,7 +400,9 @@ fn test_type_unit() {
 
 #[test]
 fn test_type_fun() {
-    assert!(matches!(parse_type("fn(Nat) -> Nat"), Type::Fun(params, return_type) if params == vec![Type::Nat] && *return_type == Type::Nat));
+    assert!(
+        matches!(parse_type("fn(Nat) -> Nat"), Type::Fun(params, return_type) if params == vec![Type::Nat] && *return_type == Type::Nat)
+    );
 }
 
 #[test]
@@ -527,10 +461,6 @@ fn test_type_rec() {
 fn test_type_var() {
     assert!(matches!(parse_type("T"), Type::Var(ref s) if s == "T"));
 }
-
-// -----------------------------------------------------------------------
-// Error cases
-// -----------------------------------------------------------------------
 
 #[test]
 fn test_error_empty_input() {
