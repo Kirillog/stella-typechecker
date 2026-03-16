@@ -26,6 +26,3 @@ jobs:
 
       - name: Test
         run: cargo test --locked --all-targets
-
-      - name: Run suite
-        run: bash test/run_suite.sh ./target/debug/stella-typechecker

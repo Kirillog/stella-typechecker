@@ -1,17 +1,30 @@
 # stella-typechecker
 
-Initialized Rust project with `lalrpop` build integration and a Nix flake dev shell.
+Rust implementation of a Stella typechecker (ITMO PL semantics & type systems course). Parsing is generated with `lalrpop` from the Stella grammar, and type checking lives in [src/typechecker.rs](src/typechecker.rs).
 
-Quick start:
+## Requirements
+- Rust toolchain (stable is fine).
+- Optional: Nix manager for a ready-to-use dev shell; any recent Rust install works without Nix.
 
-1. Enter the nix dev shell:
-
+## Getting started
 ```bash
+# (optional) enter Nix dev shell
 nix develop
+
+# build
+cargo build
+
+# run on a Stella file
+cargo run -- path/to/program.stella
 ```
 
-2. Build with cargo:
+On success, the tool prints `Type OK` to stdout and exits 0. Type errors are printed to stderr with a non-zero exit code.
 
+## Tests
 ```bash
-cargo build
+# Full test matrix (unit + Stage 1 suite via integrated test)
+cargo test --all-targets
+
+# Or run the suite runner directly (honors $CARGO_TARGET_DIR, builds if missing)
+cargo run --bin run_suite --
 ```

@@ -11,3 +11,7 @@ lalrpop-util = "0.23"
 lalrpop = "0.23"
 
 [workspace]
+
+[[bin]]
+name = "run_suite"
+path = "test/run_suite.rs"
