@@ -13,6 +13,13 @@ fn has_error<F: Fn(&TypeError) -> bool>(errors: &[TypeError], pred: F) -> bool {
     errors.iter().any(pred)
 }
 
+fn missing_witnesses(errors: &[TypeError]) -> Option<&[String]> {
+    errors.iter().find_map(|e| match e {
+        TypeError::NonexhaustiveMatchPatterns { missing } => Some(missing.as_slice()),
+        _ => None,
+    })
+}
+
 #[test]
 fn test_error_missing_main() {
     let errors = typecheck("language core; fn foo(n : Nat) -> Nat { return n }");
@@ -207,7 +214,7 @@ fn test_error_unexpected_variant_label() {
 
 #[test]
 fn test_error_tuple_index_out_of_bounds() {
-    let errors = typecheck("language core; fn main(n : Nat) -> Nat { return {1, 2}.2 }");
+    let errors = typecheck("language core; fn main(n : Nat) -> Nat { return {1, 2}.3 }");
     assert!(
         has_error(&errors, |e| matches!(
             e,
@@ -621,5 +628,72 @@ fn test_nonexhaustive_match_catchall_covers_sum() {
     assert!(
         !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
         "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_exhaustive_match_bool_with_both_branches() {
+    let errors = typecheck(
+        "language core; fn main(n : Bool) -> Nat { return match n { true => 1 | false => 0 } }",
+    );
+    assert!(
+        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_exhaustive_match_nat_zero_and_succ() {
+    let errors = typecheck(
+        "language core; fn main(n : Nat) -> Nat { return match n { 0 => 0 | succ(k) => k } }",
+    );
+    assert!(
+        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_exhaustive_match_variant_all_labels() {
+    let errors = typecheck(
+        "language core; fn main(n : <| none, some : Nat |>) -> Nat { return match n { <| none |> => 0 | <| some = x |> => x } }",
+    );
+    assert!(
+        !has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        "unexpected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_nonexhaustive_match_tuple_reports_missing_witness() {
+    let errors = typecheck(
+        "language core; fn main(n : {Bool, Bool}) -> Nat { return match n { {true, x} => 1 | {false, true} => 2 } }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        "expected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+    let missing = missing_witnesses(&errors).expect("expected missing witness list");
+    assert_eq!(
+        missing,
+        ["{false, false}".to_string()],
+        "expected exact tuple witness, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_nonexhaustive_match_record_reports_missing_witness() {
+    let errors = typecheck(
+        "language core; fn main(n : {x : Bool, y : Bool}) -> Nat { return match n { {x = true, y = b} => 1 | {x = false, y = true} => 2 } }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(e, TypeError::NonexhaustiveMatchPatterns { .. })),
+        "expected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+    let missing = missing_witnesses(&errors).expect("expected missing witness list");
+    assert_eq!(
+        missing,
+        ["{x = false, y = false}".to_string()],
+        "expected exact record witness, got: {errors:?}"
     );
 }

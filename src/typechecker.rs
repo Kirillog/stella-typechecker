@@ -745,14 +745,29 @@ impl TypeChecker {
     }
 
     fn find_missing_witness(matrix: &[Vec<Pattern>], types: &[Type]) -> Option<Vec<String>> {
+        let mut reversed_witness = Vec::new();
+        if Self::find_missing_witness_rev(matrix, types, &mut reversed_witness) {
+            reversed_witness.reverse();
+            Some(reversed_witness)
+        } else {
+            None
+        }
+    }
+
+    fn find_missing_witness_rev(
+        matrix: &[Vec<Pattern>],
+        types: &[Type],
+        reversed_witness: &mut Vec<String>,
+    ) -> bool {
         if types.is_empty() {
-            return if matrix.is_empty() { Some(vec![]) } else { None };
+            return matrix.is_empty();
         }
         if matrix.is_empty() {
-            return Some(types.iter().map(|_| "_".to_string()).collect());
+            reversed_witness.extend(types.iter().rev().map(|_| "_".to_string()));
+            return true;
         }
         if matrix.iter().any(|row| row.iter().all(|p| Self::is_catch_all(p))) {
-            return None;
+            return false;
         }
 
         let first_ty = &types[0];
@@ -760,121 +775,170 @@ impl TypeChecker {
 
         match first_ty {
             Type::Bool => {
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_bool(matrix, true), rest)
+                let checkpoint = reversed_witness.len();
+                if Self::find_missing_witness_rev(&Self::spec_bool(matrix, true), rest, reversed_witness)
                 {
-                    w.insert(0, "true".to_string());
-                    return Some(w);
+                    reversed_witness.push("true".to_string());
+                    return true;
                 }
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_bool(matrix, false), rest)
+                reversed_witness.truncate(checkpoint);
+
+                if Self::find_missing_witness_rev(&Self::spec_bool(matrix, false), rest, reversed_witness)
                 {
-                    w.insert(0, "false".to_string());
-                    return Some(w);
+                    reversed_witness.push("false".to_string());
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::Nat => {
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_nat_zero(matrix), rest)
+                let checkpoint = reversed_witness.len();
+                if Self::find_missing_witness_rev(&Self::spec_nat_zero(matrix), rest, reversed_witness)
                 {
-                    w.insert(0, "0".to_string());
-                    return Some(w);
+                    reversed_witness.push("0".to_string());
+                    return true;
                 }
+                reversed_witness.truncate(checkpoint);
+
                 let succ_types: Vec<Type> =
                     std::iter::once(Type::Nat).chain(rest.iter().cloned()).collect();
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_nat_succ(matrix), &succ_types)
-                {
-                    let inner = w.remove(0);
-                    w.insert(0, format!("succ({})", inner));
-                    return Some(w);
+                if Self::find_missing_witness_rev(
+                    &Self::spec_nat_succ(matrix),
+                    &succ_types,
+                    reversed_witness,
+                ) {
+                    let Some(inner) = reversed_witness.pop() else {
+                        return false;
+                    };
+                    reversed_witness.push(format!("succ({})", inner));
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::Unit => {
-                if let Some(mut w) = Self::find_missing_witness(&Self::spec_unit(matrix), rest) {
-                    w.insert(0, "unit".to_string());
-                    return Some(w);
+                let checkpoint = reversed_witness.len();
+                if Self::find_missing_witness_rev(&Self::spec_unit(matrix), rest, reversed_witness) {
+                    reversed_witness.push("unit".to_string());
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::Sum(l_ty, r_ty) => {
+                let checkpoint = reversed_witness.len();
+
                 let inl_types: Vec<Type> =
                     std::iter::once(*l_ty.clone()).chain(rest.iter().cloned()).collect();
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_inl(matrix), &inl_types)
+                if Self::find_missing_witness_rev(&Self::spec_inl(matrix), &inl_types, reversed_witness)
                 {
-                    let inner = w.remove(0);
-                    w.insert(0, format!("inl({})", inner));
-                    return Some(w);
+                    let Some(inner) = reversed_witness.pop() else {
+                        return false;
+                    };
+                    reversed_witness.push(format!("inl({})", inner));
+                    return true;
                 }
+                reversed_witness.truncate(checkpoint);
+
                 let inr_types: Vec<Type> =
                     std::iter::once(*r_ty.clone()).chain(rest.iter().cloned()).collect();
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_inr(matrix), &inr_types)
+                if Self::find_missing_witness_rev(&Self::spec_inr(matrix), &inr_types, reversed_witness)
                 {
-                    let inner = w.remove(0);
-                    w.insert(0, format!("inr({})", inner));
-                    return Some(w);
+                    let Some(inner) = reversed_witness.pop() else {
+                        return false;
+                    };
+                    reversed_witness.push(format!("inr({})", inner));
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::Tuple(elem_types) => {
+                let checkpoint = reversed_witness.len();
                 let arity = elem_types.len();
                 let new_types: Vec<Type> = elem_types.iter().chain(rest.iter()).cloned().collect();
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_tuple(matrix, arity), &new_types)
-                {
-                    let elems: Vec<String> = w.drain(..arity).collect();
-                    w.insert(0, format!("{{{}}}", elems.join(", ")));
-                    return Some(w);
+                if Self::find_missing_witness_rev(
+                    &Self::spec_tuple(matrix, arity),
+                    &new_types,
+                    reversed_witness,
+                ) {
+                    let mut elems = Vec::with_capacity(arity);
+                    for _ in 0..arity {
+                        let Some(elem) = reversed_witness.pop() else {
+                            return false;
+                        };
+                        elems.push(elem);
+                    }
+                    reversed_witness.push(format!("{{{}}}", elems.join(", ")));
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::Record(field_types) => {
+                let checkpoint = reversed_witness.len();
                 let arity = field_types.len();
                 let new_types: Vec<Type> = field_types
                     .iter()
                     .map(|f| f.ty.clone())
                     .chain(rest.iter().cloned())
                     .collect();
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_record(matrix, field_types), &new_types)
-                {
+                if Self::find_missing_witness_rev(
+                    &Self::spec_record(matrix, field_types),
+                    &new_types,
+                    reversed_witness,
+                ) {
+                    let mut vals = Vec::with_capacity(arity);
+                    for _ in 0..arity {
+                        let Some(val) = reversed_witness.pop() else {
+                            return false;
+                        };
+                        vals.push(val);
+                    }
                     let field_strs: Vec<String> = field_types
                         .iter()
-                        .zip(w.drain(..arity))
+                        .zip(vals)
                         .map(|(ft, val)| format!("{} = {}", ft.name, val))
                         .collect();
-                    w.insert(0, format!("{{{}}}", field_strs.join(", ")));
-                    return Some(w);
+                    reversed_witness.push(format!("{{{}}}", field_strs.join(", ")));
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::List(elem_ty) => {
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_list_nil(matrix), rest)
+                let checkpoint = reversed_witness.len();
+                if Self::find_missing_witness_rev(&Self::spec_list_nil(matrix), rest, reversed_witness)
                 {
-                    w.insert(0, "[]".to_string());
-                    return Some(w);
+                    reversed_witness.push("[]".to_string());
+                    return true;
                 }
+                reversed_witness.truncate(checkpoint);
+
                 let cons_types: Vec<Type> = [*elem_ty.clone(), Type::List(elem_ty.clone())]
                     .iter()
                     .chain(rest.iter())
                     .cloned()
                     .collect();
-                if let Some(mut w) =
-                    Self::find_missing_witness(&Self::spec_list_cons(matrix), &cons_types)
-                {
-                    let head = w.remove(0);
-                    let tail = w.remove(0);
-                    w.insert(0, format!("cons({}, {})", head, tail));
-                    return Some(w);
+                if Self::find_missing_witness_rev(
+                    &Self::spec_list_cons(matrix),
+                    &cons_types,
+                    reversed_witness,
+                ) {
+                    let Some(head) = reversed_witness.pop() else {
+                        return false;
+                    };
+                    let Some(tail) = reversed_witness.pop() else {
+                        return false;
+                    };
+                    reversed_witness.push(format!("cons({}, {})", head, tail));
+                    return true;
                 }
-                None
+                reversed_witness.truncate(checkpoint);
+                false
             }
             Type::Variant(variants) => {
+                let checkpoint = reversed_witness.len();
                 for v in variants {
                     let rows = Self::spec_variant(matrix, &v.name, v.ty.is_some());
                     let inner_types: Vec<Type> = if let Some(inner_ty) = &v.ty {
@@ -884,254 +948,225 @@ impl TypeChecker {
                     } else {
                         rest.to_vec()
                     };
-                    if let Some(mut w) = Self::find_missing_witness(&rows, &inner_types) {
+                    if Self::find_missing_witness_rev(&rows, &inner_types, reversed_witness) {
                         if v.ty.is_some() {
-                            let inner = w.remove(0);
-                            w.insert(0, format!("<| {} = {} |>", v.name, inner));
+                            let Some(inner) = reversed_witness.pop() else {
+                                return false;
+                            };
+                            reversed_witness.push(format!("<| {} = {} |>", v.name, inner));
                         } else {
-                            w.insert(0, format!("<| {} |>", v.name));
+                            reversed_witness.push(format!("<| {} |>", v.name));
                         }
-                        return Some(w);
+                        return true;
                     }
+                    reversed_witness.truncate(checkpoint);
                 }
-                None
+                false
             }
-            _ => None, // Unknown types: assume exhaustive
+            _ => false, // Unknown types: assume exhaustive
         }
     }
 
     fn spec_bool(matrix: &[Vec<Pattern>], is_true: bool) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    return Some(rest);
-                }
-                match first {
-                    Pattern::True if is_true => Some(rest),
-                    Pattern::False if !is_true => Some(rest),
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first)
+                || matches!(first, Pattern::True if is_true)
+                || matches!(first, Pattern::False if !is_true)
+            {
+                out.push(row[1..].to_vec());
+            }
+        }
+        out
     }
 
     fn spec_nat_zero(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    return Some(rest);
-                }
-                match first {
-                    Pattern::Int(0) => Some(rest),
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) || matches!(first, Pattern::Int(0)) {
+                out.push(row[1..].to_vec());
+            }
+        }
+        out
     }
 
     fn spec_nat_succ(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    let mut new_row = vec![Pattern::Var("_".to_string())];
-                    new_row.extend(rest);
-                    return Some(new_row);
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                let mut new_row = Vec::with_capacity(row.len());
+                new_row.push(Pattern::Var("_".to_string()));
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+                continue;
+            }
+            match first {
+                Pattern::Succ(inner) => {
+                    let mut new_row = Vec::with_capacity(row.len());
+                    new_row.push(*inner.clone());
+                    new_row.extend(row[1..].iter().cloned());
+                    out.push(new_row);
                 }
-                match first {
-                    Pattern::Succ(inner) => {
-                        let mut new_row = vec![*inner.clone()];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    Pattern::Int(k) if *k > 0 => {
-                        let mut new_row = vec![Pattern::Int(*k - 1)];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    _ => None,
+                Pattern::Int(k) if *k > 0 => {
+                    let mut new_row = Vec::with_capacity(row.len());
+                    new_row.push(Pattern::Int(*k - 1));
+                    new_row.extend(row[1..].iter().cloned());
+                    out.push(new_row);
                 }
-            })
-            .collect()
+                _ => {}
+            }
+        }
+        out
     }
 
     fn spec_unit(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    return Some(rest);
-                }
-                match first {
-                    Pattern::Unit => Some(rest),
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) || matches!(first, Pattern::Unit) {
+                out.push(row[1..].to_vec());
+            }
+        }
+        out
     }
 
     fn spec_inl(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    let mut new_row = vec![Pattern::Var("_".to_string())];
-                    new_row.extend(rest);
-                    return Some(new_row);
-                }
-                match first {
-                    Pattern::Inl(inner) => {
-                        let mut new_row = vec![*inner.clone()];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                let mut new_row = Vec::with_capacity(row.len());
+                new_row.push(Pattern::Var("_".to_string()));
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+                continue;
+            }
+            if let Pattern::Inl(inner) = first {
+                let mut new_row = Vec::with_capacity(row.len());
+                new_row.push(*inner.clone());
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+            }
+        }
+        out
     }
 
     fn spec_inr(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    let mut new_row = vec![Pattern::Var("_".to_string())];
-                    new_row.extend(rest);
-                    return Some(new_row);
-                }
-                match first {
-                    Pattern::Inr(inner) => {
-                        let mut new_row = vec![*inner.clone()];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                let mut new_row = Vec::with_capacity(row.len());
+                new_row.push(Pattern::Var("_".to_string()));
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+                continue;
+            }
+            if let Pattern::Inr(inner) = first {
+                let mut new_row = Vec::with_capacity(row.len());
+                new_row.push(*inner.clone());
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+            }
+        }
+        out
     }
 
     fn spec_tuple(matrix: &[Vec<Pattern>], arity: usize) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    let mut new_row: Vec<Pattern> =
-                        (0..arity).map(|_| Pattern::Var("_".to_string())).collect();
-                    new_row.extend(rest);
-                    return Some(new_row);
-                }
-                match first {
-                    Pattern::Tuple(pats) => {
-                        let mut new_row = pats.clone();
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
+                new_row.extend((0..arity).map(|_| Pattern::Var("_".to_string())));
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+                continue;
+            }
+            if let Pattern::Tuple(pats) = first {
+                let mut new_row = Vec::with_capacity(pats.len() + row.len().saturating_sub(1));
+                new_row.extend(pats.iter().cloned());
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+            }
+        }
+        out
     }
 
     fn spec_record(matrix: &[Vec<Pattern>], field_types: &[RecordFieldType]) -> Vec<Vec<Pattern>> {
         let arity = field_types.len();
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    let mut new_row: Vec<Pattern> =
-                        (0..arity).map(|_| Pattern::Var("_".to_string())).collect();
-                    new_row.extend(rest);
-                    return Some(new_row);
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
+                new_row.extend((0..arity).map(|_| Pattern::Var("_".to_string())));
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+                continue;
+            }
+            if let Pattern::Record(labelled_pats) = first {
+                let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
+                for ft in field_types {
+                    let pat = labelled_pats
+                        .iter()
+                        .find(|lp| lp.label == ft.name)
+                        .map(|lp| lp.pattern.clone())
+                        .unwrap_or_else(|| Pattern::Var("_".to_string()));
+                    new_row.push(pat);
                 }
-                match first {
-                    Pattern::Record(labelled_pats) => {
-                        let mut new_row: Vec<Pattern> = field_types
-                            .iter()
-                            .map(|ft| {
-                                labelled_pats
-                                    .iter()
-                                    .find(|lp| lp.label == ft.name)
-                                    .map(|lp| lp.pattern.clone())
-                                    .unwrap_or_else(|| Pattern::Var("_".to_string()))
-                            })
-                            .collect();
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+            }
+        }
+        out
     }
 
     fn spec_list_nil(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    return Some(rest);
-                }
-                match first {
-                    Pattern::List(pats) if pats.is_empty() => Some(rest),
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) || matches!(first, Pattern::List(pats) if pats.is_empty()) {
+                out.push(row[1..].to_vec());
+            }
+        }
+        out
     }
 
     fn spec_list_cons(matrix: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    let mut new_row = vec![
-                        Pattern::Var("_".to_string()),
-                        Pattern::Var("_".to_string()),
-                    ];
-                    new_row.extend(rest);
-                    return Some(new_row);
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                let mut new_row = Vec::with_capacity(row.len() + 1);
+                new_row.push(Pattern::Var("_".to_string()));
+                new_row.push(Pattern::Var("_".to_string()));
+                new_row.extend(row[1..].iter().cloned());
+                out.push(new_row);
+                continue;
+            }
+            match first {
+                Pattern::Cons(h, t) => {
+                    let mut new_row = Vec::with_capacity(row.len() + 1);
+                    new_row.push(*h.clone());
+                    new_row.push(*t.clone());
+                    new_row.extend(row[1..].iter().cloned());
+                    out.push(new_row);
                 }
-                match first {
-                    Pattern::Cons(h, t) => {
-                        let mut new_row = vec![*h.clone(), *t.clone()];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    Pattern::List(pats) if !pats.is_empty() => {
-                        let head = pats[0].clone();
-                        let tail_pat = Pattern::List(pats[1..].to_vec());
-                        let mut new_row = vec![head, tail_pat];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    }
-                    _ => None,
+                Pattern::List(pats) if !pats.is_empty() => {
+                    let mut new_row = Vec::with_capacity(row.len() + 1);
+                    new_row.push(pats[0].clone());
+                    new_row.push(Pattern::List(pats[1..].to_vec()));
+                    new_row.extend(row[1..].iter().cloned());
+                    out.push(new_row);
                 }
-            })
-            .collect()
+                _ => {}
+            }
+        }
+        out
     }
 
     fn spec_variant(
@@ -1139,40 +1174,40 @@ impl TypeChecker {
         label: &str,
         has_payload: bool,
     ) -> Vec<Vec<Pattern>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let rest = row[1..].to_vec();
-                let first = &row[0];
-                if Self::is_catch_all(first) {
-                    if has_payload {
-                        let mut new_row = vec![Pattern::Var("_".to_string())];
-                        new_row.extend(rest);
-                        Some(new_row)
-                    } else {
-                        Some(rest)
-                    }
-                } else if let Pattern::Variant { label: l, data } = first {
-                    if l == label {
-                        if has_payload {
-                            let inner = data
-                                .as_ref()
-                                .map(|d| *d.clone())
-                                .unwrap_or_else(|| Pattern::Var("_".to_string()));
-                            let mut new_row = vec![inner];
-                            new_row.extend(rest);
-                            Some(new_row)
-                        } else {
-                            Some(rest)
-                        }
-                    } else {
-                        None
-                    }
+        let mut out = Vec::with_capacity(matrix.len());
+        for row in matrix {
+            let first = &row[0];
+            if Self::is_catch_all(first) {
+                if has_payload {
+                    let mut new_row = Vec::with_capacity(row.len());
+                    new_row.push(Pattern::Var("_".to_string()));
+                    new_row.extend(row[1..].iter().cloned());
+                    out.push(new_row);
                 } else {
-                    None
+                    out.push(row[1..].to_vec());
                 }
-            })
-            .collect()
+                continue;
+            }
+
+            if let Pattern::Variant { label: l, data } = first {
+                if l != label {
+                    continue;
+                }
+                if has_payload {
+                    let inner = data
+                        .as_ref()
+                        .map(|d| *d.clone())
+                        .unwrap_or_else(|| Pattern::Var("_".to_string()));
+                    let mut new_row = Vec::with_capacity(row.len());
+                    new_row.push(inner);
+                    new_row.extend(row[1..].iter().cloned());
+                    out.push(new_row);
+                } else {
+                    out.push(row[1..].to_vec());
+                }
+            }
+        }
+        out
     }
 
     fn pattern_bound_names(pattern: &Pattern) -> Vec<String> {
