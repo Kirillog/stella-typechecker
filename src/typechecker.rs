@@ -1,4 +1,7 @@
-use crate::ast::{Decl, DeclFun, DeclFunGeneric, Expr, ParamDecl, Pattern, Program, RecordFieldType, ReturnType, Type};
+use crate::ast::{
+    Decl, DeclFun, DeclFunGeneric, Expr, ParamDecl, Pattern, Program, RecordFieldType, ReturnType,
+    Type,
+};
 use crate::type_error::TypeError;
 use std::collections::{HashMap, HashSet};
 
@@ -286,9 +289,7 @@ impl TypeChecker {
                     self.errors.push(TypeError::NotARecord(record_ty));
                     None
                 }
-                None => {
-                    None
-                }
+                None => None,
             },
 
             // --- sum injections: cannot synthesise without an expected type ---
@@ -349,7 +350,7 @@ impl TypeChecker {
                     case_types.push(case_ty);
                 }
                 if cases.is_empty() {
-                    self.errors.push(TypeError::IllegalEmptyMatching{});
+                    self.errors.push(TypeError::IllegalEmptyMatching {});
                     return None;
                 }
                 let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
@@ -469,7 +470,9 @@ impl TypeChecker {
                     seen.clear();
                     for f in field_types {
                         if seen.insert(f.name.clone(), ()).is_some() {
-                            self.errors.push(TypeError::DuplicateRecordTypeFields { field: f.name.clone() });
+                            self.errors.push(TypeError::DuplicateRecordTypeFields {
+                                field: f.name.clone(),
+                            });
                         }
                     }
                     let binding_names: Vec<&str> =
@@ -517,12 +520,16 @@ impl TypeChecker {
                     }
                     if let Some(vt) = variants.iter().find(|v| v.name == *label) {
                         match (&vt.ty, payload) {
-                            (_, Some(_)) if *label == "none" => self.errors.push(TypeError::UnexpectedDataForNullaryLabel {
-                                label: label.clone(),
-                            }),
-                            (_, None) if *label == "some" => self.errors.push(TypeError::MissingDataForLabel {
-                                label: label.clone(),
-                            }),
+                            (_, Some(_)) if *label == "none" => {
+                                self.errors.push(TypeError::UnexpectedDataForNullaryLabel {
+                                    label: label.clone(),
+                                })
+                            }
+                            (_, None) if *label == "some" => {
+                                self.errors.push(TypeError::MissingDataForLabel {
+                                    label: label.clone(),
+                                })
+                            }
                             (None, None) => {}
                             (Some(ty), Some(expr)) => self.check(ctx, expr, ty),
                             _ => self.errors.push(TypeError::AmbiguousVariantType {}),
@@ -584,19 +591,23 @@ impl TypeChecker {
             Expr::Match { expr, cases } => match self.infer(ctx, expr) {
                 Some(scrutinee_ty) => {
                     if cases.is_empty() {
-                        self.errors.push(TypeError::IllegalEmptyMatching{});
+                        self.errors.push(TypeError::IllegalEmptyMatching {});
                     } else {
                         let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
                         self.check_exhaustiveness(&scrutinee_ty, &patterns);
                         for match_case in cases {
                             let mut local_ctx = ctx.clone();
-                            self.extend_ctx_by_pattern(&mut local_ctx, &match_case.pattern, &scrutinee_ty);
+                            self.extend_ctx_by_pattern(
+                                &mut local_ctx,
+                                &match_case.pattern,
+                                &scrutinee_ty,
+                            );
                             self.check(&local_ctx, &match_case.expr, expected);
                         }
                     }
-                },
-                None => ()
-            }
+                }
+                None => (),
+            },
 
             // --- default: synthesise and compare ---
             _ => {
@@ -611,10 +622,10 @@ impl TypeChecker {
         match decl {
             Decl::Fun(f) => self.check_fun(ctx, f),
 
-            Decl::FunGeneric(f) => self.check_fun_generic(ctx, f), 
-            Decl::TypeAlias { .. }
-            | Decl::ExceptionType { .. }
-            | Decl::ExceptionVariant { .. } => unimplemented!(),
+            Decl::FunGeneric(f) => self.check_fun_generic(ctx, f),
+            Decl::TypeAlias { .. } | Decl::ExceptionType { .. } | Decl::ExceptionVariant { .. } => {
+                unimplemented!()
+            }
         }
     }
 
@@ -630,7 +641,9 @@ impl TypeChecker {
         let mut seen_params = HashSet::new();
         for p in params {
             if !seen_params.insert(p.name.clone()) {
-                self.errors.push(TypeError::DuplicateFunctionParameter { name: p.name.clone() });
+                self.errors.push(TypeError::DuplicateFunctionParameter {
+                    name: p.name.clone(),
+                });
                 continue;
             }
             self.validate_type(&p.ty);
@@ -697,7 +710,9 @@ impl TypeChecker {
     fn check_fun_generic(&mut self, ctx: &Context, f: &DeclFunGeneric) {
         for type_param in &f.type_params {
             if f.type_params.iter().filter(|tp| *tp == type_param).count() > 1 {
-                self.errors.push(TypeError::DuplicateTypeParameter { name: type_param.clone() });
+                self.errors.push(TypeError::DuplicateTypeParameter {
+                    name: type_param.clone(),
+                });
             }
         }
         self.check_fun_body(ctx, &f.params, &f.return_type, &f.local_decls, &f.body);
@@ -721,8 +736,7 @@ impl TypeChecker {
                     let fun_type = Type::Fun(param_types, return_type);
                     ctx.extend(f.name.clone(), fun_type);
                 }
-                Decl::ExceptionType { .. }
-                | Decl::ExceptionVariant { .. } => {
+                Decl::ExceptionType { .. } | Decl::ExceptionVariant { .. } => {
                     unimplemented!()
                 }
             }
@@ -740,7 +754,8 @@ impl TypeChecker {
     fn check_exhaustiveness(&mut self, scrutinee_ty: &Type, patterns: &[&Pattern]) {
         let matrix: Vec<Vec<Pattern>> = patterns.iter().map(|p| vec![(*p).clone()]).collect();
         if let Some(witness) = Self::find_missing_witness(&matrix, &[scrutinee_ty.clone()]) {
-            self.errors.push(TypeError::NonexhaustiveMatchPatterns { missing: witness });
+            self.errors
+                .push(TypeError::NonexhaustiveMatchPatterns { missing: witness });
         }
     }
 
@@ -766,7 +781,10 @@ impl TypeChecker {
             reversed_witness.extend(types.iter().rev().map(|_| "_".to_string()));
             return true;
         }
-        if matrix.iter().any(|row| row.iter().all(|p| Self::is_catch_all(p))) {
+        if matrix
+            .iter()
+            .any(|row| row.iter().all(|p| Self::is_catch_all(p)))
+        {
             return false;
         }
 
@@ -776,15 +794,21 @@ impl TypeChecker {
         match first_ty {
             Type::Bool => {
                 let checkpoint = reversed_witness.len();
-                if Self::find_missing_witness_rev(&Self::spec_bool(matrix, true), rest, reversed_witness)
-                {
+                if Self::find_missing_witness_rev(
+                    &Self::spec_bool(matrix, true),
+                    rest,
+                    reversed_witness,
+                ) {
                     reversed_witness.push("true".to_string());
                     return true;
                 }
                 reversed_witness.truncate(checkpoint);
 
-                if Self::find_missing_witness_rev(&Self::spec_bool(matrix, false), rest, reversed_witness)
-                {
+                if Self::find_missing_witness_rev(
+                    &Self::spec_bool(matrix, false),
+                    rest,
+                    reversed_witness,
+                ) {
                     reversed_witness.push("false".to_string());
                     return true;
                 }
@@ -793,15 +817,19 @@ impl TypeChecker {
             }
             Type::Nat => {
                 let checkpoint = reversed_witness.len();
-                if Self::find_missing_witness_rev(&Self::spec_nat_zero(matrix), rest, reversed_witness)
-                {
+                if Self::find_missing_witness_rev(
+                    &Self::spec_nat_zero(matrix),
+                    rest,
+                    reversed_witness,
+                ) {
                     reversed_witness.push("0".to_string());
                     return true;
                 }
                 reversed_witness.truncate(checkpoint);
 
-                let succ_types: Vec<Type> =
-                    std::iter::once(Type::Nat).chain(rest.iter().cloned()).collect();
+                let succ_types: Vec<Type> = std::iter::once(Type::Nat)
+                    .chain(rest.iter().cloned())
+                    .collect();
                 if Self::find_missing_witness_rev(
                     &Self::spec_nat_succ(matrix),
                     &succ_types,
@@ -818,7 +846,8 @@ impl TypeChecker {
             }
             Type::Unit => {
                 let checkpoint = reversed_witness.len();
-                if Self::find_missing_witness_rev(&Self::spec_unit(matrix), rest, reversed_witness) {
+                if Self::find_missing_witness_rev(&Self::spec_unit(matrix), rest, reversed_witness)
+                {
                     reversed_witness.push("unit".to_string());
                     return true;
                 }
@@ -828,10 +857,14 @@ impl TypeChecker {
             Type::Sum(l_ty, r_ty) => {
                 let checkpoint = reversed_witness.len();
 
-                let inl_types: Vec<Type> =
-                    std::iter::once(*l_ty.clone()).chain(rest.iter().cloned()).collect();
-                if Self::find_missing_witness_rev(&Self::spec_inl(matrix), &inl_types, reversed_witness)
-                {
+                let inl_types: Vec<Type> = std::iter::once(*l_ty.clone())
+                    .chain(rest.iter().cloned())
+                    .collect();
+                if Self::find_missing_witness_rev(
+                    &Self::spec_inl(matrix),
+                    &inl_types,
+                    reversed_witness,
+                ) {
                     let Some(inner) = reversed_witness.pop() else {
                         return false;
                     };
@@ -840,10 +873,14 @@ impl TypeChecker {
                 }
                 reversed_witness.truncate(checkpoint);
 
-                let inr_types: Vec<Type> =
-                    std::iter::once(*r_ty.clone()).chain(rest.iter().cloned()).collect();
-                if Self::find_missing_witness_rev(&Self::spec_inr(matrix), &inr_types, reversed_witness)
-                {
+                let inr_types: Vec<Type> = std::iter::once(*r_ty.clone())
+                    .chain(rest.iter().cloned())
+                    .collect();
+                if Self::find_missing_witness_rev(
+                    &Self::spec_inr(matrix),
+                    &inr_types,
+                    reversed_witness,
+                ) {
                     let Some(inner) = reversed_witness.pop() else {
                         return false;
                     };
@@ -908,8 +945,11 @@ impl TypeChecker {
             }
             Type::List(elem_ty) => {
                 let checkpoint = reversed_witness.len();
-                if Self::find_missing_witness_rev(&Self::spec_list_nil(matrix), rest, reversed_witness)
-                {
+                if Self::find_missing_witness_rev(
+                    &Self::spec_list_nil(matrix),
+                    rest,
+                    reversed_witness,
+                ) {
                     reversed_witness.push("[]".to_string());
                     return true;
                 }
@@ -1129,7 +1169,8 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
-            if Self::is_catch_all(first) || matches!(first, Pattern::List(pats) if pats.is_empty()) {
+            if Self::is_catch_all(first) || matches!(first, Pattern::List(pats) if pats.is_empty())
+            {
                 out.push(row[1..].to_vec());
             }
         }
@@ -1169,11 +1210,7 @@ impl TypeChecker {
         out
     }
 
-    fn spec_variant(
-        matrix: &[Vec<Pattern>],
-        label: &str,
-        has_payload: bool,
-    ) -> Vec<Vec<Pattern>> {
+    fn spec_variant(matrix: &[Vec<Pattern>], label: &str, has_payload: bool) -> Vec<Vec<Pattern>> {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
@@ -1214,17 +1251,25 @@ impl TypeChecker {
         match pattern {
             Pattern::Var(name) => vec![name.clone()],
             Pattern::Asc(inner, _) | Pattern::CastAs(inner, _) => Self::pattern_bound_names(inner),
-            Pattern::Tuple(patterns) | Pattern::List(patterns) => {
-                patterns.iter().flat_map(Self::pattern_bound_names).collect()
-            }
+            Pattern::Tuple(patterns) | Pattern::List(patterns) => patterns
+                .iter()
+                .flat_map(Self::pattern_bound_names)
+                .collect(),
             Pattern::Cons(head, tail) => {
                 let mut names = Self::pattern_bound_names(head);
                 names.extend(Self::pattern_bound_names(tail));
                 names
             }
-            Pattern::Record(lps) => lps.iter().flat_map(|lp| Self::pattern_bound_names(&lp.pattern)).collect(),
-            Pattern::Inl(inner) | Pattern::Inr(inner) | Pattern::Succ(inner) => Self::pattern_bound_names(inner),
-            Pattern::Variant { data, .. } => data.as_deref().map_or(vec![], Self::pattern_bound_names),
+            Pattern::Record(lps) => lps
+                .iter()
+                .flat_map(|lp| Self::pattern_bound_names(&lp.pattern))
+                .collect(),
+            Pattern::Inl(inner) | Pattern::Inr(inner) | Pattern::Succ(inner) => {
+                Self::pattern_bound_names(inner)
+            }
+            Pattern::Variant { data, .. } => {
+                data.as_deref().map_or(vec![], Self::pattern_bound_names)
+            }
             Pattern::True | Pattern::False | Pattern::Unit | Pattern::Int(_) => vec![],
         }
     }
@@ -1276,9 +1321,14 @@ impl TypeChecker {
                         }
                     }
                     // Detect missing fields in the record pattern
-                    let pattern_labels: HashSet<&str> =
-                        labelled_patterns.iter().map(|lp| lp.label.as_str()).collect();
-                    if field_types.iter().any(|ft| !pattern_labels.contains(ft.name.as_str())) {
+                    let pattern_labels: HashSet<&str> = labelled_patterns
+                        .iter()
+                        .map(|lp| lp.label.as_str())
+                        .collect();
+                    if field_types
+                        .iter()
+                        .any(|ft| !pattern_labels.contains(ft.name.as_str()))
+                    {
                         self.errors.push(TypeError::UnexpectedPatternForType {
                             pattern_desc: "record".to_string(),
                             scrutinee_type: ty.clone(),
@@ -1334,12 +1384,18 @@ impl TypeChecker {
                 Type::Variant(variants) => {
                     if let Some(vt) = variants.iter().find(|v| v.name == *label) {
                         match (&vt.ty, data) {
-                            (Some(_), None) => self.errors.push(TypeError::UnexpectedNullaryVariantPattern {
-                                label: label.clone(),
-                            }),
-                            (None, Some(_)) => self.errors.push(TypeError::UnexpectedNonNullaryVariantPattern {
-                                label: label.clone(),
-                            }),
+                            (Some(_), None) => {
+                                self.errors
+                                    .push(TypeError::UnexpectedNullaryVariantPattern {
+                                        label: label.clone(),
+                                    })
+                            }
+                            (None, Some(_)) => {
+                                self.errors
+                                    .push(TypeError::UnexpectedNonNullaryVariantPattern {
+                                        label: label.clone(),
+                                    })
+                            }
                             (Some(inner_ty), Some(inner_pat)) => {
                                 self.extend_ctx_by_pattern(ctx, inner_pat, inner_ty);
                             }
