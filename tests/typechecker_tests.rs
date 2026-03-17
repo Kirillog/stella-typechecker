@@ -516,13 +516,16 @@ fn test_error_duplicate_let_binding() {
 }
 
 #[test]
-fn test_well_typed_letrec_inl_inner_pattern_with_sum_ascription() {
+fn test_error_letrec_inl_inner_pattern_with_sum_ascription() {
     let errors = typecheck(
         "language core; fn main(n : Nat) -> Nat { return letrec inl(x) as (Nat + Bool) = inl(0) as (Nat + Bool) in x }",
     );
     assert!(
-        errors.is_empty(),
-        "expected well-typed program, got: {errors:?}"
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveLetRecPatterns { .. }
+        )),
+        "expected NonexhaustiveLetRecPatterns, got: {errors:?}"
     );
 }
 
@@ -746,7 +749,6 @@ fn test_nonexhaustive_match_record_reports_missing_witness() {
 
 #[test]
 fn test_nonexhaustive_let_patterns_missing_false() {
-    // Let binding with only true pattern should trigger nonexhaustive patterns error
     let errors = typecheck("language core; fn main(b : Bool) -> Nat { return let true = b in 1 }");
     assert!(
         has_error(&errors, |e| matches!(
@@ -759,7 +761,6 @@ fn test_nonexhaustive_let_patterns_missing_false() {
 
 #[test]
 fn test_nonexhaustive_let_patterns_missing_inr() {
-    // Let binding matching only inl of a sum type
     let errors =
         typecheck("language core; fn main(s : Bool + Nat) -> Nat { return let inl(x) = s in 1 }");
     assert!(
@@ -773,7 +774,6 @@ fn test_nonexhaustive_let_patterns_missing_inr() {
 
 #[test]
 fn test_nonexhaustive_let_rec_patterns_missing_false() {
-    // LetRec binding with only true pattern should trigger nonexhaustive patterns error
     let errors =
         typecheck("language core; fn main(b : Bool) -> Nat { return letrec true = b in 1 }");
     assert!(
@@ -787,7 +787,6 @@ fn test_nonexhaustive_let_rec_patterns_missing_false() {
 
 #[test]
 fn test_nonexhaustive_let_rec_patterns_missing_inr() {
-    // LetRec binding matching only inl of a sum type
     let errors = typecheck(
         "language core; fn main(s : Bool + Nat) -> Nat { return letrec inl(x) = s in 1 }",
     );

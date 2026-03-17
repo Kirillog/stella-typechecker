@@ -121,9 +121,15 @@ impl TypeChecker {
 
             Expr::Abstraction { params, body } => {
                 let mut local_ctx = ctx.clone();
+                let mut seen_names = HashSet::new();
                 let param_types = params
                     .iter()
                     .map(|p| {
+                        if !seen_names.insert(p.name.clone()) {
+                            self.errors.push(TypeError::DuplicateFunctionParameter {
+                                name: p.name.clone(),
+                            });
+                        }
                         if p.ty == Type::Auto {
                             self.errors.push(TypeError::UnexpectedTypeForParameter {
                                 param: p.name.clone(),
@@ -406,15 +412,21 @@ impl TypeChecker {
                             });
                     }
                     let mut local_ctx = ctx.clone();
-                    for (param, expected_param_ty) in params.iter().zip(param_types) {
-                        if param.ty != *expected_param_ty {
-                            self.errors.push(TypeError::UnexpectedTypeForParameter {
-                                param: param.name.clone(),
-                                expected: expected_param_ty.clone(),
-                                got: param.ty.clone(),
+                    let mut seen_names = HashSet::new();
+                    for (p, expected_param_ty) in params.iter().zip(param_types) {
+                        if !seen_names.insert(p.name.clone()) {
+                            self.errors.push(TypeError::DuplicateFunctionParameter {
+                                name: p.name.clone(),
                             });
                         }
-                        local_ctx.extend(param.name.clone(), expected_param_ty.clone());
+                        if p.ty != *expected_param_ty {
+                            self.errors.push(TypeError::UnexpectedTypeForParameter {
+                                param: p.name.clone(),
+                                expected: expected_param_ty.clone(),
+                                got: p.ty.clone(),
+                            });
+                        }
+                        local_ctx.extend(p.name.clone(), expected_param_ty.clone());
                     }
                     self.check(&local_ctx, body, return_type);
                 }
