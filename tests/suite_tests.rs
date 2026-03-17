@@ -11,13 +11,7 @@ struct Config {
     bin_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Outcome {
-    pass: u32,
-    fail: u32,
-}
-
-fn run_all(config: &Config) -> io::Result<Outcome> {
+fn run_all(config: &Config) -> io::Result<u32> {
     let suite_root = config.repo_root.join("tests/stella_test_suite/stage1");
     let well_typed_roots = vec![suite_root.join("well-typed"), suite_root.join("extra")];
     let ill_typed_roots = vec![suite_root.join("ill-typed"), suite_root.join("extra")];
@@ -46,7 +40,7 @@ fn run_all(config: &Config) -> io::Result<Outcome> {
 
     println!("\nResults: {}/{} passed", pass, pass + fail);
 
-    Ok(Outcome { pass, fail })
+    Ok(fail)
 }
 
 fn run_group(
@@ -201,5 +195,5 @@ fn stage1_suite_run() {
     };
 
     let outcome = run_all(&config).expect("suite should run");
-    assert_eq!(outcome.fail, 0, "Stage 1 suite reported failures");
+    assert_eq!(outcome, 0, "Stage 1 suite reported failures");
 }

@@ -516,6 +516,14 @@ fn test_error_duplicate_let_binding() {
 }
 
 #[test]
+fn test_well_typed_letrec_inl_inner_pattern_with_sum_ascription() {
+    let errors = typecheck(
+        "language core; fn main(n : Nat) -> Nat { return letrec inl(x) as (Nat + Bool) = inl(0) as (Nat + Bool) in x }",
+    );
+    assert!(errors.is_empty(), "expected well-typed program, got: {errors:?}");
+}
+
+#[test]
 fn test_error_duplicate_type_parameter() {
     let errors = typecheck(
         "language core;

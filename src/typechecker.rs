@@ -1,6 +1,6 @@
 use crate::ast::{
     Decl, DeclFun, DeclFunGeneric, Expr, ParamDecl, Pattern, Program, RecordFieldType, ReturnType,
-    Type,
+    Type, VariantFieldType,
 };
 use crate::type_error::TypeError;
 use std::collections::{HashMap, HashSet};
@@ -48,38 +48,33 @@ impl TypeChecker {
 
     pub fn infer(&mut self, ctx: &Context, expr: &Expr) -> Option<Type> {
         match expr {
-            // --- literals ---
             Expr::ConstTrue | Expr::ConstFalse => Some(Type::Bool),
             Expr::ConstUnit => Some(Type::Unit),
             Expr::ConstInt(_) => Some(Type::Nat),
 
-            // --- variable lookup ---
             Expr::Var(_name) => ctx.lookup(_name).cloned().or_else(|| {
                 self.errors
                     .push(TypeError::UndefinedVariable(_name.clone()));
                 None
             }),
 
-            // --- control flow ---
             Expr::If { cond, then_, else_ } => {
                 self.check(ctx, cond, &Type::Bool);
                 let then_ty = self.infer(ctx, then_)?;
                 self.check(ctx, else_, &then_ty);
                 Some(then_ty)
             }
-            // --- type ascription ---
+
             Expr::TypeAsc(_e, _ty) => {
                 self.check(ctx, _e, _ty);
                 Some(_ty.as_ref().clone())
             }
 
-            // --- sequence ---
             Expr::Sequence(e1, e2) => {
                 self.infer(ctx, e1)?;
                 self.infer(ctx, e2)
             }
 
-            // --- let ---
             Expr::Let(bindings, body) => {
                 let mut local_ctx = ctx.clone();
                 let mut seen_names: HashSet<String> = HashSet::new();
@@ -95,15 +90,38 @@ impl TypeChecker {
                 }
                 self.infer(&local_ctx, body)
             }
+            Expr::LetRec(bindings, body) => {
+                let mut local_ctx = ctx.clone();
+                let mut seen_names: HashSet<String> = HashSet::new();
+                for binding in bindings {
+                    for name in Self::pattern_bound_names(&binding.pattern) {
+                        if !seen_names.insert(name.clone()) {
+                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                        }
+                    }
+                }
+                // Allow mutual and self-recursion by first extending the context with all bindings
+                for binding in bindings {
+                    if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
+                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    }
+                }
+                for binding in bindings {
+                    if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
+                        self.check(&local_ctx, &binding.expr, &ty);
+                    } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    }
+                }
+                self.infer(&local_ctx, body)
+            }
 
-            // --- functions ---
             Expr::Abstraction { params, body } => {
                 let mut local_ctx = ctx.clone();
                 let param_types = params
                     .iter()
                     .map(|p| {
                         if p.ty == Type::Auto {
-                            // cannot infer parameter types without annotations
                             self.errors.push(TypeError::UnexpectedTypeForParameter {
                                 param: p.name.clone(),
                                 expected: Type::Auto,
@@ -142,7 +160,6 @@ impl TypeChecker {
                 }
             }
 
-            // --- arithmetic (Nat × Nat → Nat) ---
             Expr::Add(left, right)
             | Expr::Subtract(left, right)
             | Expr::Multiply(left, right)
@@ -152,7 +169,6 @@ impl TypeChecker {
                 Some(Type::Nat)
             }
 
-            // --- comparisons (Nat × Nat → Bool) ---
             Expr::LessThan(left, right)
             | Expr::LessThanOrEqual(left, right)
             | Expr::GreaterThan(left, right)
@@ -163,7 +179,7 @@ impl TypeChecker {
                 self.check(ctx, right, &Type::Nat);
                 Some(Type::Bool)
             }
-            // --- logic (Bool × Bool → Bool) ---
+
             Expr::LogicAnd(left, right) | Expr::LogicOr(left, right) => {
                 self.check(ctx, left, &Type::Bool);
                 self.check(ctx, right, &Type::Bool);
@@ -174,7 +190,6 @@ impl TypeChecker {
                 Some(Type::Bool)
             }
 
-            // --- natural number builtins ---
             Expr::Succ(e) | Expr::Pred(e) => {
                 self.check(ctx, e, &Type::Nat);
                 Some(Type::Nat)
@@ -184,7 +199,6 @@ impl TypeChecker {
                 Some(Type::Bool)
             }
             Expr::NatRec(_n, _z, _s) => {
-                // n:Nat, z:T, s:fn(Nat)->fn(T)->T → T
                 self.check(ctx, _n, &Type::Nat);
                 let z_ty = self.infer(ctx, &_z)?;
                 self.check(
@@ -198,9 +212,7 @@ impl TypeChecker {
                 Some(z_ty)
             }
 
-            // --- fixpoint ---
             Expr::Fix(_f) => {
-                // fn(T)->T → T
                 let f_ty = self.infer(ctx, _f)?;
                 match &f_ty {
                     Type::Fun(param_types, return_type) if param_types.len() == 1 => {
@@ -225,7 +237,6 @@ impl TypeChecker {
                 }
             }
 
-            // --- tuple literal ---
             Expr::Tuple(exprs) => {
                 let elem_types = exprs
                     .iter()
@@ -254,7 +265,6 @@ impl TypeChecker {
                 }
             }
 
-            // --- record literal ---
             Expr::Record(bindings) => {
                 let mut seen = HashMap::new();
                 let mut field_types = Vec::new();
@@ -292,19 +302,16 @@ impl TypeChecker {
                 None => None,
             },
 
-            // --- sum injections: cannot synthesise without an expected type ---
             Expr::Inl(_) | Expr::Inr(_) => {
                 self.errors.push(TypeError::AmbiguousSumType);
                 None
             }
 
-            // --- variant construction: cannot synthesise without an expected type ---
             Expr::Variant { .. } => {
                 self.errors.push(TypeError::AmbiguousVariantType);
                 None
             }
 
-            // --- list literal ---
             Expr::List(exprs) => {
                 if exprs.is_empty() {
                     self.errors.push(TypeError::AmbiguousList);
@@ -320,10 +327,20 @@ impl TypeChecker {
                 self.check(ctx, tail, &Type::List(Box::new(elem_ty.clone())));
                 Some(Type::List(Box::new(elem_ty)))
             }
-            Expr::Head(e) | Expr::Tail(e) => {
+            Expr::Head(e) => {
                 let list_ty = self.infer(ctx, e)?;
                 match list_ty {
                     Type::List(elem_ty) => Some(*elem_ty),
+                    a => {
+                        self.errors.push(TypeError::NotAList(a));
+                        None
+                    }
+                }
+            }
+            Expr::Tail(e) => {
+                let list_ty = self.infer(ctx, e)?;
+                match list_ty {
+                    Type::List(elem_ty) => Some(Type::List(elem_ty)),
                     a => {
                         self.errors.push(TypeError::NotAList(a));
                         None
@@ -370,14 +387,12 @@ impl TypeChecker {
 
     pub fn check(&mut self, ctx: &Context, expr: &Expr, expected: &Type) {
         match expr {
-            // --- control flow ---
             Expr::If { cond, then_, else_ } => {
                 self.check(ctx, cond, &Type::Bool);
                 self.check(ctx, then_, expected);
                 self.check(ctx, else_, expected);
             }
 
-            // --- lambda (abstraction) ---
             Expr::Abstraction { params, body } => match expected {
                 Type::Fun(param_types, return_type) => {
                     if param_types.len() != params.len() {
@@ -404,7 +419,7 @@ impl TypeChecker {
                     expected: expected.clone(),
                 }),
             },
-            // --- application ---
+
             Expr::Application { func, args } => match self.infer(ctx, func) {
                 Some(Type::Fun(param_types, return_type)) => {
                     if param_types.len() != args.len() {
@@ -423,7 +438,6 @@ impl TypeChecker {
                 None => self.errors.push(TypeError::AmbiguousFunction),
             },
 
-            // --- tuple ---
             Expr::Tuple(exprs) => match expected {
                 Type::Tuple(elem_types) => {
                     if elem_types.len() != exprs.len() {
@@ -456,7 +470,6 @@ impl TypeChecker {
                 None => self.errors.push(TypeError::AmbiguousTuple),
             },
 
-            // --- record ---
             Expr::Record(bindings) => match expected {
                 Type::Record(field_types) => {
                     let mut seen = HashMap::new();
@@ -507,7 +520,6 @@ impl TypeChecker {
                 }),
             },
 
-            // --- variant construction ---
             Expr::Variant { label, payload } => match expected {
                 Type::Variant(variants) => {
                     let mut seen = HashMap::new();
@@ -546,7 +558,6 @@ impl TypeChecker {
                 }),
             },
 
-            // --- sum type injections ---
             Expr::Inl(inner) => match expected {
                 Type::Sum(left, _) => self.check(ctx, inner, left),
                 _ => self.errors.push(TypeError::UnexpectedInjection {
@@ -560,7 +571,6 @@ impl TypeChecker {
                 }),
             },
 
-            // --- list literal ---
             Expr::List(exprs) => match expected {
                 Type::List(elem_ty) => {
                     for e in exprs {
@@ -608,8 +618,47 @@ impl TypeChecker {
                 }
                 None => (),
             },
+            Expr::Let(bindings, body) => {
+                let mut local_ctx = ctx.clone();
+                let mut seen_names: HashSet<String> = HashSet::new();
+                for binding in bindings {
+                    for name in Self::pattern_bound_names(&binding.pattern) {
+                        if !seen_names.insert(name.clone()) {
+                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                        }
+                    }
+                    if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    }
+                }
+                self.check(&local_ctx, body, expected);
+            }
+            Expr::LetRec(bindings, body) => {
+                let mut local_ctx = ctx.clone();
+                let mut seen_names: HashSet<String> = HashSet::new();
+                for binding in bindings {
+                    for name in Self::pattern_bound_names(&binding.pattern) {
+                        if !seen_names.insert(name.clone()) {
+                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                        }
+                    }
+                }
+                // Allow mutual and self-recursion by first extending the context with all bindings
+                for binding in bindings {
+                    if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
+                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    }
+                }
+                for binding in bindings {
+                    if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
+                        self.check(&local_ctx, &binding.expr, &ty);
+                    } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    }
+                }
+                self.check(&local_ctx, body, expected);
+            }
 
-            // --- default: synthesise and compare ---
             _ => {
                 if let Some(got) = self.infer(ctx, expr) {
                     self.assert_types_equal(expected, &got);
@@ -740,6 +789,71 @@ impl TypeChecker {
                     unimplemented!()
                 }
             }
+        }
+    }
+
+    fn extract_declared_type(pattern: &Pattern) -> Option<Type> {
+        match pattern {
+            Pattern::Asc(_, ty) | Pattern::CastAs(_, ty) => Some(*ty.clone()),
+            Pattern::Variant { label, data } => {
+                let field = VariantFieldType {
+                    name: label.clone(),
+                    ty: data.as_deref().and_then(Self::extract_declared_type),
+                };
+                Some(Type::Variant(vec![field]))
+            }
+            Pattern::Inl(inner) => {
+                let _ = Self::extract_declared_type(inner)?;
+                None
+            }
+            Pattern::Inr(inner) => {
+                let _ = Self::extract_declared_type(inner)?;
+                None
+            }
+            Pattern::Tuple(pats) => {
+                let types = pats
+                    .iter()
+                    .map(Self::extract_declared_type)
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Type::Tuple(types))
+            }
+            Pattern::Record(fields) => {
+                let types = fields
+                    .iter()
+                    .map(|f| {
+                        Some(RecordFieldType {
+                            name: f.label.clone(),
+                            ty: Self::extract_declared_type(&f.pattern)?,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Type::Record(types))
+            }
+            Pattern::List(pats) => {
+                let mut tys = pats
+                    .iter()
+                    .map(Self::extract_declared_type)
+                    .collect::<Option<Vec<_>>>()?;
+                let elem = tys.pop()?;
+                if tys.iter().all(|t| t == &elem) {
+                    Some(Type::List(Box::new(elem)))
+                } else {
+                    None
+                }
+            }
+            Pattern::Cons(head, tail) => {
+                let head_ty = Self::extract_declared_type(head)?;
+                match Self::extract_declared_type(tail)? {
+                    Type::List(elem_ty) if *elem_ty == head_ty => {
+                        Some(Type::List(Box::new(head_ty)))
+                    }
+                    _ => None,
+                }
+            }
+            Pattern::False | Pattern::True => Some(Type::Bool),
+            Pattern::Unit => Some(Type::Unit),
+            Pattern::Int(_) | Pattern::Succ(_) => Some(Type::Nat),
+            _ => None,
         }
     }
 
@@ -1003,7 +1117,7 @@ impl TypeChecker {
                 }
                 false
             }
-            _ => false, // Unknown types: assume exhaustive
+            _ => false,
         }
     }
 
@@ -1320,7 +1434,7 @@ impl TypeChecker {
                             });
                         }
                     }
-                    // Detect missing fields in the record pattern
+
                     let pattern_labels: HashSet<&str> = labelled_patterns
                         .iter()
                         .map(|lp| lp.label.as_str())
