@@ -1,21 +1,21 @@
 use stella_typechecker::parser;
-use stella_typechecker::type_error::TypeError;
+use stella_typechecker::type_error::{TypeCheckError, TypeError};
 use stella_typechecker::typechecker::TypeChecker;
 
-fn typecheck(src: &str) -> Vec<TypeError> {
+fn typecheck(src: &str) -> Vec<TypeCheckError> {
     let prog = parser::ProgramParser::new()
         .parse(src)
         .expect("parse failed");
     TypeChecker::new().check_program(&prog)
 }
 
-fn has_error<F: Fn(&TypeError) -> bool>(errors: &[TypeError], pred: F) -> bool {
-    errors.iter().any(pred)
+fn has_error<F: Fn(&TypeError) -> bool>(errors: &[TypeCheckError], pred: F) -> bool {
+    errors.iter().any(|e| pred(&e.error))
 }
 
-fn missing_witnesses(errors: &[TypeError]) -> Option<&[String]> {
-    errors.iter().find_map(|e| match e {
-        TypeError::NonexhaustiveMatchPatterns { missing } => Some(missing.as_slice()),
+fn missing_witnesses(errors: &[TypeCheckError]) -> Option<&[String]> {
+    errors.iter().find_map(|e| match &e.error {
+        TypeError::NonexhaustiveMatchPatterns { missing, .. } => Some(missing.as_slice()),
         _ => None,
     })
 }
@@ -54,7 +54,7 @@ fn test_error_unexpected_type_for_expression() {
 fn test_error_not_a_function() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return n(1) }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NotAFunction(_))),
+        has_error(&errors, |e| matches!(e, TypeError::NotAFunction { .. })),
         "expected NotAFunction, got: {errors:?}"
     );
 }
@@ -63,7 +63,7 @@ fn test_error_not_a_function() {
 fn test_error_not_a_tuple() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return n.0 }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NotATuple(_))),
+        has_error(&errors, |e| matches!(e, TypeError::NotATuple { .. })),
         "expected NotATuple, got: {errors:?}"
     );
 }
@@ -72,7 +72,7 @@ fn test_error_not_a_tuple() {
 fn test_error_not_a_record() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return n.foo }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NotARecord(_))),
+        has_error(&errors, |e| matches!(e, TypeError::NotARecord { .. })),
         "expected NotARecord, got: {errors:?}"
     );
 }
@@ -81,7 +81,7 @@ fn test_error_not_a_record() {
 fn test_error_not_a_list() {
     let errors = typecheck("language core; fn main(n : Nat) -> Bool { return List::isempty(n) }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NotAList(_))),
+        has_error(&errors, |e| matches!(e, TypeError::NotAList { .. })),
         "expected NotAList, got: {errors:?}"
     );
 }
@@ -240,7 +240,7 @@ fn test_error_unexpected_tuple_length() {
 fn test_error_ambiguous_sum_type() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return let x = inl(0) in n }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::AmbiguousSumType)),
+        has_error(&errors, |e| matches!(e, TypeError::AmbiguousSumType { .. })),
         "expected AmbiguousSumType, got: {errors:?}"
     );
 }
@@ -250,7 +250,10 @@ fn test_error_ambiguous_variant_type() {
     let errors =
         typecheck("language core; fn main(n : Nat) -> Nat { return let x = <| foo = 1 |> in n }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::AmbiguousVariantType)),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::AmbiguousVariantType { .. }
+        )),
         "expected AmbiguousVariantType, got: {errors:?}"
     );
 }
@@ -259,7 +262,7 @@ fn test_error_ambiguous_variant_type() {
 fn test_error_ambiguous_list() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return let x = [] in n }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::AmbiguousList)),
+        has_error(&errors, |e| matches!(e, TypeError::AmbiguousList { .. })),
         "expected AmbiguousList, got: {errors:?}"
     );
 }
@@ -268,7 +271,7 @@ fn test_error_ambiguous_list() {
 fn test_error_ambiguous_tuple() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return (inl(0)).0 }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::AmbiguousTuple)),
+        has_error(&errors, |e| matches!(e, TypeError::AmbiguousTuple { .. })),
         "expected AmbiguousTuple, got: {errors:?}"
     );
 }
@@ -277,7 +280,10 @@ fn test_error_ambiguous_tuple() {
 fn test_error_ambiguous_function() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return (inl(0))(1) }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::AmbiguousFunction)),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::AmbiguousFunction { .. }
+        )),
         "expected AmbiguousFunction, got: {errors:?}"
     );
 }
@@ -286,7 +292,10 @@ fn test_error_ambiguous_function() {
 fn test_error_illegal_empty_matching() {
     let errors = typecheck("language core; fn main(n : Bool) -> Nat { return match n {} }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::IllegalEmptyMatching)),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::IllegalEmptyMatching { .. }
+        )),
         "expected IllegalEmptyMatching, got: {errors:?}"
     );
 }

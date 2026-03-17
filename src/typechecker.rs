@@ -2,7 +2,7 @@ use crate::ast::{
     Decl, DeclFun, DeclFunGeneric, Expr, ParamDecl, Pattern, Program, RecordFieldType, ReturnType,
     Type, VariantFieldType,
 };
-use crate::type_error::TypeError;
+use crate::type_error::{TypeCheckError, TypeError};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default)]
@@ -29,19 +29,41 @@ pub fn types_equal(t1: &Type, t2: &Type) -> bool {
 }
 
 pub struct TypeChecker {
-    errors: Vec<TypeError>,
+    errors: Vec<TypeCheckError>,
+    current_function: Option<String>,
 }
 
 impl TypeChecker {
     pub fn new() -> Self {
-        Self { errors: Vec::new() }
+        Self {
+            errors: Vec::new(),
+            current_function: None,
+        }
+    }
+
+    fn push_error(&mut self, error: TypeError) {
+        self.errors.push(TypeCheckError {
+            error,
+            in_function: self.current_function.clone(),
+        });
     }
 
     pub fn assert_types_equal(&mut self, expected: &Type, got: &Type) {
         if !types_equal(expected, got) {
-            self.errors.push(TypeError::UnexpectedTypeForExpression {
+            self.push_error(TypeError::UnexpectedTypeForExpression {
                 expected: expected.clone(),
                 got: got.clone(),
+                expr: None,
+            });
+        }
+    }
+
+    pub fn assert_types_equal_for_expr(&mut self, expected: &Type, got: &Type, expr: &Expr) {
+        if !types_equal(expected, got) {
+            self.push_error(TypeError::UnexpectedTypeForExpression {
+                expected: expected.clone(),
+                got: got.clone(),
+                expr: Some(Box::new(expr.clone())),
             });
         }
     }
@@ -53,8 +75,7 @@ impl TypeChecker {
             Expr::ConstInt(_) => Some(Type::Nat),
 
             Expr::Var(_name) => ctx.lookup(_name).cloned().or_else(|| {
-                self.errors
-                    .push(TypeError::UndefinedVariable(_name.clone()));
+                self.push_error(TypeError::UndefinedVariable(_name.clone()));
                 None
             }),
 
@@ -81,11 +102,11 @@ impl TypeChecker {
                 for binding in bindings {
                     for name in Self::pattern_bound_names(&binding.pattern) {
                         if !seen_names.insert(name.clone()) {
-                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                            self.push_error(TypeError::DuplicateLetBinding { name });
                         }
                     }
                     if let Some(ty) = self.infer(&ctx, &binding.expr) {
-                        self.check_let_exhaustiveness(&binding.pattern, &ty);
+                        self.check_let_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -97,7 +118,7 @@ impl TypeChecker {
                 for binding in bindings {
                     for name in Self::pattern_bound_names(&binding.pattern) {
                         if !seen_names.insert(name.clone()) {
-                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                            self.push_error(TypeError::DuplicateLetBinding { name });
                         }
                     }
                 }
@@ -109,10 +130,10 @@ impl TypeChecker {
                 }
                 for binding in bindings {
                     if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
-                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.check(&local_ctx, &binding.expr, &ty);
                     } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
-                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -126,12 +147,12 @@ impl TypeChecker {
                     .iter()
                     .map(|p| {
                         if !seen_names.insert(p.name.clone()) {
-                            self.errors.push(TypeError::DuplicateFunctionParameter {
+                            self.push_error(TypeError::DuplicateFunctionParameter {
                                 name: p.name.clone(),
                             });
                         }
                         if p.ty == Type::Auto {
-                            self.errors.push(TypeError::UnexpectedTypeForParameter {
+                            self.push_error(TypeError::UnexpectedTypeForParameter {
                                 param: p.name.clone(),
                                 expected: Type::Auto,
                                 got: Type::Auto,
@@ -156,14 +177,17 @@ impl TypeChecker {
                         Some(return_type.as_ref().clone())
                     }
                     Type::Fun(param_types, _) => {
-                        self.errors.push(TypeError::IncorrectNumberOfArguments {
+                        self.push_error(TypeError::IncorrectNumberOfArguments {
                             expected: param_types.len(),
                             got: args.len(),
                         });
                         None
                     }
                     _ => {
-                        self.errors.push(TypeError::NotAFunction(func_ty));
+                        self.push_error(TypeError::NotAFunction {
+                            ty: func_ty,
+                            expr: func.clone(),
+                        });
                         None
                     }
                 }
@@ -230,16 +254,17 @@ impl TypeChecker {
                         Some(param_ty.clone())
                     }
                     Type::Fun(param_types, _) => {
-                        self.errors.push(TypeError::IncorrectNumberOfArguments {
+                        self.push_error(TypeError::IncorrectNumberOfArguments {
                             expected: 1,
                             got: param_types.len(),
                         });
                         None
                     }
                     _ => {
-                        self.errors.push(TypeError::UnexpectedTypeForExpression {
+                        self.push_error(TypeError::UnexpectedTypeForExpression {
                             expected: Type::Fun(vec![Type::Auto], Box::new(Type::Auto)),
                             got: f_ty,
+                            expr: None,
                         });
                         None
                     }
@@ -261,14 +286,18 @@ impl TypeChecker {
                         Some(elem_types[*index - 1].clone())
                     }
                     Type::Tuple(elem_types) => {
-                        self.errors.push(TypeError::TupleIndexOutOfBounds {
+                        self.push_error(TypeError::TupleIndexOutOfBounds {
                             index: *index,
                             length: elem_types.len(),
+                            expr: e.clone(),
                         });
                         None
                     }
                     _ => {
-                        self.errors.push(TypeError::NotATuple(tuple_ty));
+                        self.push_error(TypeError::NotATuple {
+                            ty: tuple_ty,
+                            expr: e.clone(),
+                        });
                         None
                     }
                 }
@@ -279,7 +308,7 @@ impl TypeChecker {
                 let mut field_types = Vec::new();
                 for binding in bindings {
                     if seen.insert(binding.name.clone(), ()).is_some() {
-                        self.errors.push(TypeError::DuplicateRecordFields {
+                        self.push_error(TypeError::DuplicateRecordFields {
                             field: binding.name.clone(),
                         });
                     }
@@ -297,33 +326,43 @@ impl TypeChecker {
                     if let Some(ft) = field_types.iter().find(|f| f.name == *field) {
                         Some(ft.ty.clone())
                     } else {
-                        self.errors.push(TypeError::UnexpectedFieldAccess {
+                        self.push_error(TypeError::UnexpectedFieldAccess {
                             field: field.clone(),
                             record_type: Type::Record(field_types),
+                            expr: Some(expr.clone()),
                         });
                         None
                     }
                 }
                 Some(record_ty) => {
-                    self.errors.push(TypeError::NotARecord(record_ty));
+                    self.push_error(TypeError::NotARecord {
+                        ty: record_ty,
+                        expr: expr.clone(),
+                    });
                     None
                 }
                 None => None,
             },
 
             Expr::Inl(_) | Expr::Inr(_) => {
-                self.errors.push(TypeError::AmbiguousSumType);
+                self.push_error(TypeError::AmbiguousSumType {
+                    expr: Box::new(expr.clone()),
+                });
                 None
             }
 
             Expr::Variant { .. } => {
-                self.errors.push(TypeError::AmbiguousVariantType);
+                self.push_error(TypeError::AmbiguousVariantType {
+                    expr: Box::new(expr.clone()),
+                });
                 None
             }
 
             Expr::List(exprs) => {
                 if exprs.is_empty() {
-                    self.errors.push(TypeError::AmbiguousList);
+                    self.push_error(TypeError::AmbiguousList {
+                        expr: Box::new(expr.clone()),
+                    });
                     None
                 } else {
                     let ty = self.infer(ctx, &exprs[0])?;
@@ -341,7 +380,10 @@ impl TypeChecker {
                 match list_ty {
                     Type::List(elem_ty) => Some(*elem_ty),
                     a => {
-                        self.errors.push(TypeError::NotAList(a));
+                        self.push_error(TypeError::NotAList {
+                            ty: a,
+                            expr: e.clone(),
+                        });
                         None
                     }
                 }
@@ -351,7 +393,10 @@ impl TypeChecker {
                 match list_ty {
                     Type::List(elem_ty) => Some(Type::List(elem_ty)),
                     a => {
-                        self.errors.push(TypeError::NotAList(a));
+                        self.push_error(TypeError::NotAList {
+                            ty: a,
+                            expr: e.clone(),
+                        });
                         None
                     }
                 }
@@ -361,7 +406,10 @@ impl TypeChecker {
                 match list_ty {
                     Type::List(_) => Some(Type::Bool),
                     a => {
-                        self.errors.push(TypeError::NotAList(a));
+                        self.push_error(TypeError::NotAList {
+                            ty: a,
+                            expr: e.clone(),
+                        });
                         None
                     }
                 }
@@ -376,11 +424,11 @@ impl TypeChecker {
                     case_types.push(case_ty);
                 }
                 if cases.is_empty() {
-                    self.errors.push(TypeError::IllegalEmptyMatching {});
+                    self.push_error(TypeError::IllegalEmptyMatching { expr: expr.clone() });
                     return None;
                 }
                 let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                self.check_match_exhaustiveness(&scrutinee_ty, &patterns);
+                self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
                 if let Some(first_case_ty) = case_types.first() {
                     for case_ty in &case_types[1..] {
                         self.assert_types_equal(first_case_ty, case_ty);
@@ -405,22 +453,21 @@ impl TypeChecker {
             Expr::Abstraction { params, body } => match expected {
                 Type::Fun(param_types, return_type) => {
                     if param_types.len() != params.len() {
-                        self.errors
-                            .push(TypeError::UnexpectedNumberOfParametersInLambda {
-                                expected: param_types.len(),
-                                got: params.len(),
-                            });
+                        self.push_error(TypeError::UnexpectedNumberOfParametersInLambda {
+                            expected: param_types.len(),
+                            got: params.len(),
+                        });
                     }
                     let mut local_ctx = ctx.clone();
                     let mut seen_names = HashSet::new();
                     for (p, expected_param_ty) in params.iter().zip(param_types) {
                         if !seen_names.insert(p.name.clone()) {
-                            self.errors.push(TypeError::DuplicateFunctionParameter {
+                            self.push_error(TypeError::DuplicateFunctionParameter {
                                 name: p.name.clone(),
                             });
                         }
                         if p.ty != *expected_param_ty {
-                            self.errors.push(TypeError::UnexpectedTypeForParameter {
+                            self.push_error(TypeError::UnexpectedTypeForParameter {
                                 param: p.name.clone(),
                                 expected: expected_param_ty.clone(),
                                 got: p.ty.clone(),
@@ -430,15 +477,16 @@ impl TypeChecker {
                     }
                     self.check(&local_ctx, body, return_type);
                 }
-                _ => self.errors.push(TypeError::UnexpectedLambda {
+                _ => self.push_error(TypeError::UnexpectedLambda {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
 
             Expr::Application { func, args } => match self.infer(ctx, func) {
                 Some(Type::Fun(param_types, return_type)) => {
                     if param_types.len() != args.len() {
-                        self.errors.push(TypeError::IncorrectNumberOfArguments {
+                        self.push_error(TypeError::IncorrectNumberOfArguments {
                             expected: param_types.len(),
                             got: args.len(),
                         });
@@ -449,14 +497,17 @@ impl TypeChecker {
                     }
                     self.assert_types_equal(return_type.as_ref(), expected);
                 }
-                Some(func_ty) => self.errors.push(TypeError::NotAFunction(func_ty)),
-                None => self.errors.push(TypeError::AmbiguousFunction),
+                Some(func_ty) => self.push_error(TypeError::NotAFunction {
+                    ty: func_ty,
+                    expr: func.clone(),
+                }),
+                None => self.push_error(TypeError::AmbiguousFunction { expr: func.clone() }),
             },
 
             Expr::Tuple(exprs) => match expected {
                 Type::Tuple(elem_types) => {
                     if elem_types.len() != exprs.len() {
-                        self.errors.push(TypeError::UnexpectedTupleLength {
+                        self.push_error(TypeError::UnexpectedTupleLength {
                             expected: elem_types.len(),
                             got: exprs.len(),
                         });
@@ -465,8 +516,9 @@ impl TypeChecker {
                         self.check(ctx, e, ty);
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedTuple {
+                _ => self.push_error(TypeError::UnexpectedTuple {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
 
@@ -475,14 +527,18 @@ impl TypeChecker {
                     if *index >= 1 && *index - 1 < elem_types.len() {
                         self.assert_types_equal(&elem_types[*index - 1], expected);
                     } else {
-                        self.errors.push(TypeError::TupleIndexOutOfBounds {
+                        self.push_error(TypeError::TupleIndexOutOfBounds {
                             index: *index,
                             length: elem_types.len(),
+                            expr: e.clone(),
                         });
                     }
                 }
-                Some(tuple_ty) => self.errors.push(TypeError::NotATuple(tuple_ty)),
-                None => self.errors.push(TypeError::AmbiguousTuple),
+                Some(tuple_ty) => self.push_error(TypeError::NotATuple {
+                    ty: tuple_ty,
+                    expr: e.clone(),
+                }),
+                None => self.push_error(TypeError::AmbiguousTuple { expr: e.clone() }),
             },
 
             Expr::Record(bindings) => match expected {
@@ -490,7 +546,7 @@ impl TypeChecker {
                     let mut seen = HashMap::new();
                     for b in bindings {
                         if seen.insert(b.name.clone(), ()).is_some() {
-                            self.errors.push(TypeError::DuplicateRecordFields {
+                            self.push_error(TypeError::DuplicateRecordFields {
                                 field: b.name.clone(),
                             });
                         }
@@ -498,7 +554,7 @@ impl TypeChecker {
                     seen.clear();
                     for f in field_types {
                         if seen.insert(f.name.clone(), ()).is_some() {
-                            self.errors.push(TypeError::DuplicateRecordTypeFields {
+                            self.push_error(TypeError::DuplicateRecordTypeFields {
                                 field: f.name.clone(),
                             });
                         }
@@ -513,7 +569,10 @@ impl TypeChecker {
                         .map(|n| n.to_string())
                         .collect();
                     if !missing.is_empty() {
-                        self.errors.push(TypeError::MissingRecordFields { missing });
+                        self.push_error(TypeError::MissingRecordFields {
+                            missing,
+                            expr: Box::new(expr.clone()),
+                        });
                     }
                     let unexpected: Vec<String> = binding_names
                         .iter()
@@ -521,8 +580,10 @@ impl TypeChecker {
                         .map(|n| n.to_string())
                         .collect();
                     if !unexpected.is_empty() {
-                        self.errors
-                            .push(TypeError::UnexpectedRecordFields { unexpected });
+                        self.push_error(TypeError::UnexpectedRecordFields {
+                            unexpected,
+                            expr: Box::new(expr.clone()),
+                        });
                     }
                     for binding in bindings {
                         if let Some(ft) = field_types.iter().find(|f| f.name == binding.name) {
@@ -530,8 +591,9 @@ impl TypeChecker {
                         }
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedRecord {
+                _ => self.push_error(TypeError::UnexpectedRecord {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
 
@@ -540,7 +602,7 @@ impl TypeChecker {
                     let mut seen = HashMap::new();
                     for v in variants {
                         if seen.insert(v.name.clone(), ()).is_some() {
-                            self.errors.push(TypeError::DuplicateVariantTypeFields {
+                            self.push_error(TypeError::DuplicateVariantTypeFields {
                                 label: v.name.clone(),
                             });
                         }
@@ -548,41 +610,47 @@ impl TypeChecker {
                     if let Some(vt) = variants.iter().find(|v| v.name == *label) {
                         match (&vt.ty, payload) {
                             (_, Some(_)) if *label == "none" => {
-                                self.errors.push(TypeError::UnexpectedDataForNullaryLabel {
+                                self.push_error(TypeError::UnexpectedDataForNullaryLabel {
                                     label: label.clone(),
                                 })
                             }
                             (_, None) if *label == "some" => {
-                                self.errors.push(TypeError::MissingDataForLabel {
+                                self.push_error(TypeError::MissingDataForLabel {
                                     label: label.clone(),
                                 })
                             }
                             (None, None) => {}
                             (Some(ty), Some(expr)) => self.check(ctx, expr, ty),
-                            _ => self.errors.push(TypeError::AmbiguousVariantType {}),
+                            _ => self.push_error(TypeError::AmbiguousVariantType {
+                                expr: Box::new(expr.clone()),
+                            }),
                         }
                     } else {
-                        self.errors.push(TypeError::UnexpectedVariantLabel {
+                        self.push_error(TypeError::UnexpectedVariantLabel {
                             label: label.clone(),
                             variant_type: expected.clone(),
+                            expr: Some(Box::new(expr.clone())),
                         });
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedVariant {
+                _ => self.push_error(TypeError::UnexpectedVariant {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
 
             Expr::Inl(inner) => match expected {
                 Type::Sum(left, _) => self.check(ctx, inner, left),
-                _ => self.errors.push(TypeError::UnexpectedInjection {
+                _ => self.push_error(TypeError::UnexpectedInjection {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
             Expr::Inr(inner) => match expected {
                 Type::Sum(_, right) => self.check(ctx, inner, right),
-                _ => self.errors.push(TypeError::UnexpectedInjection {
+                _ => self.push_error(TypeError::UnexpectedInjection {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
 
@@ -592,8 +660,9 @@ impl TypeChecker {
                         self.check(ctx, e, elem_ty);
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedList {
+                _ => self.push_error(TypeError::UnexpectedList {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
             Expr::ConsList(head, tail) => match expected {
@@ -601,25 +670,29 @@ impl TypeChecker {
                     self.check(ctx, head, elem_ty);
                     self.check(ctx, tail, expected);
                 }
-                _ => self.errors.push(TypeError::UnexpectedList {
+                _ => self.push_error(TypeError::UnexpectedList {
                     expected: expected.clone(),
+                    expr: Box::new(expr.clone()),
                 }),
             },
             Expr::IsEmpty(e) => {
                 self.assert_types_equal(expected, &Type::Bool);
                 match self.infer(ctx, e) {
                     Some(Type::List(_)) => {}
-                    Some(a) => self.errors.push(TypeError::NotAList(a)),
-                    None => self.errors.push(TypeError::AmbiguousList),
+                    Some(a) => self.push_error(TypeError::NotAList {
+                        ty: a,
+                        expr: e.clone(),
+                    }),
+                    None => self.push_error(TypeError::AmbiguousList { expr: e.clone() }),
                 }
             }
             Expr::Match { expr, cases } => match self.infer(ctx, expr) {
                 Some(scrutinee_ty) => {
                     if cases.is_empty() {
-                        self.errors.push(TypeError::IllegalEmptyMatching {});
+                        self.push_error(TypeError::IllegalEmptyMatching { expr: expr.clone() });
                     } else {
                         let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                        self.check_match_exhaustiveness(&scrutinee_ty, &patterns);
+                        self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
                         for match_case in cases {
                             let mut local_ctx = ctx.clone();
                             self.extend_ctx_by_pattern(
@@ -639,11 +712,11 @@ impl TypeChecker {
                 for binding in bindings {
                     for name in Self::pattern_bound_names(&binding.pattern) {
                         if !seen_names.insert(name.clone()) {
-                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                            self.push_error(TypeError::DuplicateLetBinding { name });
                         }
                     }
                     if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
-                        self.check_let_exhaustiveness(&binding.pattern, &ty);
+                        self.check_let_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -655,7 +728,7 @@ impl TypeChecker {
                 for binding in bindings {
                     for name in Self::pattern_bound_names(&binding.pattern) {
                         if !seen_names.insert(name.clone()) {
-                            self.errors.push(TypeError::DuplicateLetBinding { name });
+                            self.push_error(TypeError::DuplicateLetBinding { name });
                         }
                     }
                 }
@@ -667,10 +740,10 @@ impl TypeChecker {
                 }
                 for binding in bindings {
                     if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
-                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.check(&local_ctx, &binding.expr, &ty);
                     } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
-                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -679,7 +752,7 @@ impl TypeChecker {
 
             _ => {
                 if let Some(got) = self.infer(ctx, expr) {
-                    self.assert_types_equal(expected, &got);
+                    self.assert_types_equal_for_expr(expected, &got, expr);
                 }
             }
         }
@@ -708,7 +781,7 @@ impl TypeChecker {
         let mut seen_params = HashSet::new();
         for p in params {
             if !seen_params.insert(p.name.clone()) {
-                self.errors.push(TypeError::DuplicateFunctionParameter {
+                self.push_error(TypeError::DuplicateFunctionParameter {
                     name: p.name.clone(),
                 });
                 continue;
@@ -730,7 +803,7 @@ impl TypeChecker {
                 let mut seen = HashMap::new();
                 for f in fields {
                     if seen.insert(f.name.clone(), ()).is_some() {
-                        self.errors.push(TypeError::DuplicateRecordTypeFields {
+                        self.push_error(TypeError::DuplicateRecordTypeFields {
                             field: f.name.clone(),
                         });
                     }
@@ -741,7 +814,7 @@ impl TypeChecker {
                 let mut seen = HashMap::new();
                 for v in variants {
                     if seen.insert(v.name.clone(), ()).is_some() {
-                        self.errors.push(TypeError::DuplicateVariantTypeFields {
+                        self.push_error(TypeError::DuplicateVariantTypeFields {
                             label: v.name.clone(),
                         });
                     }
@@ -771,18 +844,22 @@ impl TypeChecker {
     }
 
     fn check_fun(&mut self, ctx: &Context, f: &DeclFun) {
+        let prev_fn = self.current_function.replace(f.name.clone());
         self.check_fun_body(ctx, &f.params, &f.return_type, &f.local_decls, &f.body);
+        self.current_function = prev_fn;
     }
 
     fn check_fun_generic(&mut self, ctx: &Context, f: &DeclFunGeneric) {
+        let prev_fn = self.current_function.replace(f.name.clone());
         for type_param in &f.type_params {
             if f.type_params.iter().filter(|tp| *tp == type_param).count() > 1 {
-                self.errors.push(TypeError::DuplicateTypeParameter {
+                self.push_error(TypeError::DuplicateTypeParameter {
                     name: type_param.clone(),
                 });
             }
         }
         self.check_fun_body(ctx, &f.params, &f.return_type, &f.local_decls, &f.body);
+        self.current_function = prev_fn;
     }
 
     fn extend_ctx(decls: &[Decl], ctx: &mut Context) {
@@ -890,27 +967,43 @@ impl TypeChecker {
         }
     }
 
-    fn check_match_exhaustiveness(&mut self, scrutinee_ty: &Type, patterns: &[&Pattern]) {
+    fn check_match_exhaustiveness(
+        &mut self,
+        scrutinee_ty: &Type,
+        patterns: &[&Pattern],
+        scrutinee: &Expr,
+    ) {
         let matrix: Vec<Vec<Pattern>> = patterns.iter().map(|p| vec![(*p).clone()]).collect();
         if let Some(witness) = Self::find_missing_witness(&matrix, &[scrutinee_ty.clone()]) {
-            self.errors
-                .push(TypeError::NonexhaustiveMatchPatterns { missing: witness });
+            self.push_error(TypeError::NonexhaustiveMatchPatterns {
+                missing: witness,
+                expr: Box::new(scrutinee.clone()),
+            });
         }
     }
 
-    fn check_let_exhaustiveness(&mut self, pattern: &Pattern, expr_ty: &Type) {
+    fn check_let_exhaustiveness(&mut self, pattern: &Pattern, expr_ty: &Type, binding_expr: &Expr) {
         let matrix: Vec<Vec<Pattern>> = vec![vec![pattern.clone()]];
         if let Some(witness) = Self::find_missing_witness(&matrix, &[expr_ty.clone()]) {
-            self.errors
-                .push(TypeError::NonexhaustiveLetPatterns { missing: witness });
+            self.push_error(TypeError::NonexhaustiveLetPatterns {
+                missing: witness,
+                expr: Box::new(binding_expr.clone()),
+            });
         }
     }
 
-    fn check_letrec_exhaustiveness(&mut self, pattern: &Pattern, expr_ty: &Type) {
+    fn check_letrec_exhaustiveness(
+        &mut self,
+        pattern: &Pattern,
+        expr_ty: &Type,
+        binding_expr: &Expr,
+    ) {
         let matrix: Vec<Vec<Pattern>> = vec![vec![pattern.clone()]];
         if let Some(witness) = Self::find_missing_witness(&matrix, &[expr_ty.clone()]) {
-            self.errors
-                .push(TypeError::NonexhaustiveLetRecPatterns { missing: witness });
+            self.push_error(TypeError::NonexhaustiveLetRecPatterns {
+                missing: witness,
+                expr: Box::new(binding_expr.clone()),
+            });
         }
     }
 
@@ -1452,7 +1545,7 @@ impl TypeChecker {
                         self.extend_ctx_by_pattern(ctx, p, t);
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "tuple".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1463,7 +1556,7 @@ impl TypeChecker {
                     let mut seen = HashMap::new();
                     for lp in labelled_patterns {
                         if seen.insert(lp.label.clone(), ()).is_some() {
-                            self.errors.push(TypeError::DuplicateRecordPatternFields {
+                            self.push_error(TypeError::DuplicateRecordPatternFields {
                                 field: lp.label.clone(),
                             });
                             continue;
@@ -1471,9 +1564,10 @@ impl TypeChecker {
                         if let Some(ft) = field_types.iter().find(|f| f.name == lp.label) {
                             self.extend_ctx_by_pattern(ctx, &lp.pattern, &ft.ty);
                         } else {
-                            self.errors.push(TypeError::UnexpectedFieldAccess {
+                            self.push_error(TypeError::UnexpectedFieldAccess {
                                 field: lp.label.clone(),
                                 record_type: ty.clone(),
+                                expr: None,
                             });
                         }
                     }
@@ -1486,13 +1580,13 @@ impl TypeChecker {
                         .iter()
                         .any(|ft| !pattern_labels.contains(ft.name.as_str()))
                     {
-                        self.errors.push(TypeError::UnexpectedPatternForType {
+                        self.push_error(TypeError::UnexpectedPatternForType {
                             pattern_desc: "record".to_string(),
                             scrutinee_type: ty.clone(),
                         });
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "record".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1504,7 +1598,7 @@ impl TypeChecker {
                         self.extend_ctx_by_pattern(ctx, p, elem_ty);
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "list".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1515,7 +1609,7 @@ impl TypeChecker {
                     self.extend_ctx_by_pattern(ctx, head_pat, elem_ty);
                     self.extend_ctx_by_pattern(ctx, tail_pat, ty);
                 }
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "cons".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1523,7 +1617,7 @@ impl TypeChecker {
 
             Pattern::Inl(inner) => match ty {
                 Type::Sum(left, _) => self.extend_ctx_by_pattern(ctx, inner, left),
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "inl".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1531,7 +1625,7 @@ impl TypeChecker {
 
             Pattern::Inr(inner) => match ty {
                 Type::Sum(_, right) => self.extend_ctx_by_pattern(ctx, inner, right),
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "inr".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1542,16 +1636,14 @@ impl TypeChecker {
                     if let Some(vt) = variants.iter().find(|v| v.name == *label) {
                         match (&vt.ty, data) {
                             (Some(_), None) => {
-                                self.errors
-                                    .push(TypeError::UnexpectedNullaryVariantPattern {
-                                        label: label.clone(),
-                                    })
+                                self.push_error(TypeError::UnexpectedNullaryVariantPattern {
+                                    label: label.clone(),
+                                })
                             }
                             (None, Some(_)) => {
-                                self.errors
-                                    .push(TypeError::UnexpectedNonNullaryVariantPattern {
-                                        label: label.clone(),
-                                    })
+                                self.push_error(TypeError::UnexpectedNonNullaryVariantPattern {
+                                    label: label.clone(),
+                                })
                             }
                             (Some(inner_ty), Some(inner_pat)) => {
                                 self.extend_ctx_by_pattern(ctx, inner_pat, inner_ty);
@@ -1559,13 +1651,14 @@ impl TypeChecker {
                             (None, None) => {}
                         }
                     } else {
-                        self.errors.push(TypeError::UnexpectedVariantLabel {
+                        self.push_error(TypeError::UnexpectedVariantLabel {
                             label: label.clone(),
                             variant_type: ty.clone(),
+                            expr: None,
                         });
                     }
                 }
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "variant".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1573,7 +1666,7 @@ impl TypeChecker {
 
             Pattern::Succ(inner) => match ty {
                 Type::Nat => self.extend_ctx_by_pattern(ctx, inner, &Type::Nat),
-                _ => self.errors.push(TypeError::UnexpectedPatternForType {
+                _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "succ".to_string(),
                     scrutinee_type: ty.clone(),
                 }),
@@ -1581,7 +1674,7 @@ impl TypeChecker {
 
             Pattern::True | Pattern::False => {
                 if !matches!(ty, Type::Bool) {
-                    self.errors.push(TypeError::UnexpectedPatternForType {
+                    self.push_error(TypeError::UnexpectedPatternForType {
                         pattern_desc: "bool literal".to_string(),
                         scrutinee_type: ty.clone(),
                     });
@@ -1590,7 +1683,7 @@ impl TypeChecker {
 
             Pattern::Unit => {
                 if !matches!(ty, Type::Unit) {
-                    self.errors.push(TypeError::UnexpectedPatternForType {
+                    self.push_error(TypeError::UnexpectedPatternForType {
                         pattern_desc: "unit".to_string(),
                         scrutinee_type: ty.clone(),
                     });
@@ -1599,7 +1692,7 @@ impl TypeChecker {
 
             Pattern::Int(_) => {
                 if !matches!(ty, Type::Nat) {
-                    self.errors.push(TypeError::UnexpectedPatternForType {
+                    self.push_error(TypeError::UnexpectedPatternForType {
                         pattern_desc: "nat literal".to_string(),
                         scrutinee_type: ty.clone(),
                     });
@@ -1608,7 +1701,7 @@ impl TypeChecker {
         }
     }
 
-    pub fn check_program(mut self, prog: &Program) -> Vec<TypeError> {
+    pub fn check_program(mut self, prog: &Program) -> Vec<TypeCheckError> {
         let mut ctx = Context::new();
 
         Self::extend_ctx(&prog.decls, &mut ctx);
@@ -1632,7 +1725,7 @@ impl TypeChecker {
             .count()
             == 0
         {
-            self.errors.push(TypeError::MissingMain);
+            self.push_error(TypeError::MissingMain);
         }
     }
 
@@ -1643,7 +1736,7 @@ impl TypeChecker {
             .filter(|d| matches!(d, Decl::Fun(f) if f.name == "main" && f.params.len() != 1))
             .next()
         {
-            self.errors.push(TypeError::IncorrectArityOfMain {
+            self.push_error(TypeError::IncorrectArityOfMain {
                 got: f.params.len(),
             });
         }
@@ -1658,8 +1751,7 @@ impl TypeChecker {
         }
         for (name, count) in fun_name_counts {
             if count > 1 {
-                self.errors
-                    .push(TypeError::DuplicateFunctionDeclaration { name });
+                self.push_error(TypeError::DuplicateFunctionDeclaration { name });
             }
         }
     }

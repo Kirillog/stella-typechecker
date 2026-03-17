@@ -23,9 +23,7 @@ fn main() {
     if errors.is_empty() {
         println!("Type OK");
     } else {
-        for e in &errors {
-            eprintln!("Type error: {e:?}");
-        }
+        eprintln!("{}", errors[0]);
         std::process::exit(2);
     }
 }
