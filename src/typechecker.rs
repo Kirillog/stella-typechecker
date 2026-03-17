@@ -84,7 +84,8 @@ impl TypeChecker {
                             self.errors.push(TypeError::DuplicateLetBinding { name });
                         }
                     }
-                    if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                    if let Some(ty) = self.infer(&ctx, &binding.expr) {
+                        self.check_let_exhaustiveness(&binding.pattern, &ty);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -108,8 +109,10 @@ impl TypeChecker {
                 }
                 for binding in bindings {
                     if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
                         self.check(&local_ctx, &binding.expr, &ty);
                     } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -371,7 +374,7 @@ impl TypeChecker {
                     return None;
                 }
                 let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                self.check_exhaustiveness(&scrutinee_ty, &patterns);
+                self.check_match_exhaustiveness(&scrutinee_ty, &patterns);
                 if let Some(first_case_ty) = case_types.first() {
                     for case_ty in &case_types[1..] {
                         self.assert_types_equal(first_case_ty, case_ty);
@@ -604,7 +607,7 @@ impl TypeChecker {
                         self.errors.push(TypeError::IllegalEmptyMatching {});
                     } else {
                         let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                        self.check_exhaustiveness(&scrutinee_ty, &patterns);
+                        self.check_match_exhaustiveness(&scrutinee_ty, &patterns);
                         for match_case in cases {
                             let mut local_ctx = ctx.clone();
                             self.extend_ctx_by_pattern(
@@ -628,6 +631,7 @@ impl TypeChecker {
                         }
                     }
                     if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                        self.check_let_exhaustiveness(&binding.pattern, &ty);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -651,8 +655,10 @@ impl TypeChecker {
                 }
                 for binding in bindings {
                     if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
                         self.check(&local_ctx, &binding.expr, &ty);
                     } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                        self.check_letrec_exhaustiveness(&binding.pattern, &ty);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
                 }
@@ -865,11 +871,34 @@ impl TypeChecker {
         }
     }
 
-    fn check_exhaustiveness(&mut self, scrutinee_ty: &Type, patterns: &[&Pattern]) {
+    fn strip_asc(pattern: &Pattern) -> &Pattern {
+        match pattern {
+            Pattern::Asc(inner, _) | Pattern::CastAs(inner, _) => Self::strip_asc(inner),
+            _ => pattern,
+        }
+    }
+
+    fn check_match_exhaustiveness(&mut self, scrutinee_ty: &Type, patterns: &[&Pattern]) {
         let matrix: Vec<Vec<Pattern>> = patterns.iter().map(|p| vec![(*p).clone()]).collect();
         if let Some(witness) = Self::find_missing_witness(&matrix, &[scrutinee_ty.clone()]) {
             self.errors
                 .push(TypeError::NonexhaustiveMatchPatterns { missing: witness });
+        }
+    }
+
+    fn check_let_exhaustiveness(&mut self, pattern: &Pattern, expr_ty: &Type) {
+        let matrix: Vec<Vec<Pattern>> = vec![vec![pattern.clone()]];
+        if let Some(witness) = Self::find_missing_witness(&matrix, &[expr_ty.clone()]) {
+            self.errors
+                .push(TypeError::NonexhaustiveLetPatterns { missing: witness });
+        }
+    }
+
+    fn check_letrec_exhaustiveness(&mut self, pattern: &Pattern, expr_ty: &Type) {
+        let matrix: Vec<Vec<Pattern>> = vec![vec![pattern.clone()]];
+        if let Some(witness) = Self::find_missing_witness(&matrix, &[expr_ty.clone()]) {
+            self.errors
+                .push(TypeError::NonexhaustiveLetRecPatterns { missing: witness });
         }
     }
 
@@ -1125,9 +1154,10 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
+            let stripped = Self::strip_asc(first);
             if Self::is_catch_all(first)
-                || matches!(first, Pattern::True if is_true)
-                || matches!(first, Pattern::False if !is_true)
+                || matches!(stripped, Pattern::True if is_true)
+                || matches!(stripped, Pattern::False if !is_true)
             {
                 out.push(row[1..].to_vec());
             }
@@ -1139,7 +1169,7 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
-            if Self::is_catch_all(first) || matches!(first, Pattern::Int(0)) {
+            if Self::is_catch_all(first) || matches!(Self::strip_asc(first), Pattern::Int(0)) {
                 out.push(row[1..].to_vec());
             }
         }
@@ -1157,7 +1187,7 @@ impl TypeChecker {
                 out.push(new_row);
                 continue;
             }
-            match first {
+            match Self::strip_asc(first) {
                 Pattern::Succ(inner) => {
                     let mut new_row = Vec::with_capacity(row.len());
                     new_row.push(*inner.clone());
@@ -1180,7 +1210,7 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
-            if Self::is_catch_all(first) || matches!(first, Pattern::Unit) {
+            if Self::is_catch_all(first) || matches!(Self::strip_asc(first), Pattern::Unit) {
                 out.push(row[1..].to_vec());
             }
         }
@@ -1198,7 +1228,7 @@ impl TypeChecker {
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Inl(inner) = first {
+            if let Pattern::Inl(inner) = Self::strip_asc(first) {
                 let mut new_row = Vec::with_capacity(row.len());
                 new_row.push(*inner.clone());
                 new_row.extend(row[1..].iter().cloned());
@@ -1219,7 +1249,7 @@ impl TypeChecker {
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Inr(inner) = first {
+            if let Pattern::Inr(inner) = Self::strip_asc(first) {
                 let mut new_row = Vec::with_capacity(row.len());
                 new_row.push(*inner.clone());
                 new_row.extend(row[1..].iter().cloned());
@@ -1240,7 +1270,7 @@ impl TypeChecker {
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Tuple(pats) = first {
+            if let Pattern::Tuple(pats) = Self::strip_asc(first) {
                 let mut new_row = Vec::with_capacity(pats.len() + row.len().saturating_sub(1));
                 new_row.extend(pats.iter().cloned());
                 new_row.extend(row[1..].iter().cloned());
@@ -1262,7 +1292,7 @@ impl TypeChecker {
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Record(labelled_pats) = first {
+            if let Pattern::Record(labelled_pats) = Self::strip_asc(first) {
                 let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
                 for ft in field_types {
                     let pat = labelled_pats
@@ -1283,7 +1313,8 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
-            if Self::is_catch_all(first) || matches!(first, Pattern::List(pats) if pats.is_empty())
+            if Self::is_catch_all(first)
+                || matches!(Self::strip_asc(first), Pattern::List(pats) if pats.is_empty())
             {
                 out.push(row[1..].to_vec());
             }
@@ -1303,7 +1334,7 @@ impl TypeChecker {
                 out.push(new_row);
                 continue;
             }
-            match first {
+            match Self::strip_asc(first) {
                 Pattern::Cons(h, t) => {
                     let mut new_row = Vec::with_capacity(row.len() + 1);
                     new_row.push(*h.clone());
@@ -1340,7 +1371,7 @@ impl TypeChecker {
                 continue;
             }
 
-            if let Pattern::Variant { label: l, data } = first {
+            if let Pattern::Variant { label: l, data } = Self::strip_asc(first) {
                 if l != label {
                     continue;
                 }

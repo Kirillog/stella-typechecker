@@ -4,161 +4,168 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum TypeError {
-    // 1
     MissingMain,
-    // 2
+
     UndefinedVariable(String),
-    // 3
+
     UnexpectedTypeForExpression {
         expected: Type,
         got: Type,
     },
-    // 4
+
     NotAFunction(Type),
-    // 5
+
     NotATuple(Type),
-    // 6
+
     NotARecord(Type),
-    // 7
+
     NotAList(Type),
-    // 8
+
     UnexpectedLambda {
         expected: Type,
     },
-    // 9
+
     UnexpectedTypeForParameter {
         param: String,
         expected: Type,
         got: Type,
     },
-    // 10
+
     UnexpectedTuple {
         expected: Type,
     },
-    // 11
+
     UnexpectedRecord {
         expected: Type,
     },
-    // 12
+
     UnexpectedVariant {
         expected: Type,
     },
-    // 13
+
     UnexpectedList {
         expected: Type,
     },
-    // 14
+
     UnexpectedInjection {
         expected: Type,
     },
-    // 15
+
     MissingRecordFields {
         missing: Vec<String>,
     },
-    // 16
+
     UnexpectedRecordFields {
         unexpected: Vec<String>,
     },
-    // 17
+
     UnexpectedFieldAccess {
         field: String,
         record_type: Type,
     },
-    // 18
+
     UnexpectedVariantLabel {
         label: String,
         variant_type: Type,
     },
-    // 19
+
     TupleIndexOutOfBounds {
         index: usize,
         length: usize,
     },
-    // 20
+
     UnexpectedTupleLength {
         expected: usize,
         got: usize,
     },
-    // 21
+
     AmbiguousSumType,
-    // 22
+
     AmbiguousVariantType,
-    // 23
+
     AmbiguousList,
     AmbiguousTuple,
     AmbiguousFunction,
-    // 24
+
     IllegalEmptyMatching,
-    // 25
+
     NonexhaustiveMatchPatterns {
         missing: Vec<String>,
     },
-    // 26
+
     UnexpectedPatternForType {
         pattern_desc: String,
         scrutinee_type: Type,
     },
-    // 27
+
     DuplicateRecordFields {
         field: String,
     },
-    // 28
+
     DuplicateRecordTypeFields {
         field: String,
     },
-    // 29
+
     DuplicateVariantTypeFields {
         label: String,
     },
-    // 30
+
     DuplicateFunctionDeclaration {
         name: String,
     },
-    // 31
+
     IncorrectArityOfMain {
         got: usize,
     },
-    // 32
+
     IncorrectNumberOfArguments {
         expected: usize,
         got: usize,
     },
-    // 33
+
     UnexpectedNumberOfParametersInLambda {
         expected: usize,
         got: usize,
     },
-    // 34
+
     DuplicateRecordPatternFields {
         field: String,
     },
-    // 35
+
     UnexpectedDataForNullaryLabel {
         label: String,
     },
-    // 36
+
     MissingDataForLabel {
         label: String,
     },
-    // 37
+
     UnexpectedNonNullaryVariantPattern {
         label: String,
     },
-    // 38
+
     UnexpectedNullaryVariantPattern {
         label: String,
     },
-    // 39
+
     DuplicateFunctionParameter {
         name: String,
     },
-    // 40
+
     DuplicateLetBinding {
         name: String,
     },
-    // 41
+
     DuplicateTypeParameter {
         name: String,
+    },
+
+    NonexhaustiveLetPatterns {
+        missing: Vec<String>,
+    },
+
+    NonexhaustiveLetRecPatterns {
+        missing: Vec<String>,
     },
 }
 
@@ -250,6 +257,10 @@ impl fmt::Display for TypeError {
             TypeError::AmbiguousTuple =>
                                 write!(f, "ERROR_AMBIGUOUS_TUPLE: cannot determine tuple element types"),
             TypeError::AmbiguousFunction => write!(f, "ERROR_AMBIGUOUS_FUNCTION: cannot determine function type"),
+            TypeError::NonexhaustiveLetPatterns { missing } =>
+                                write!(f, "ERROR_NONEXHAUSTIVE_LET_PATTERNS: missing patterns: {}", missing.join(", ")),
+            TypeError::NonexhaustiveLetRecPatterns { missing } =>
+                                write!(f, "ERROR_NONEXHAUSTIVE_LET_REC_PATTERNS: missing patterns: {}", missing.join(", ")),
         }
     }
 }
