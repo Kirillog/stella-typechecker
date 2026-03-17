@@ -16,18 +16,19 @@ impl Context {
     }
 
     pub fn extend(&mut self, name: impl Into<String>, ty: Type) -> Option<Type> {
-        return self.vars.insert(name.into(), ty);
+        self.vars.insert(name.into(), ty)
     }
 
     pub fn lookup(&self, name: &str) -> Option<&Type> {
-        return self.vars.get(name);
+        self.vars.get(name)
     }
 }
 
 pub fn types_equal(t1: &Type, t2: &Type) -> bool {
-    return t1 == &Type::Auto || t2 == &Type::Auto || t1 == t2;
+    t1 == &Type::Auto || t2 == &Type::Auto || t1 == t2
 }
 
+#[derive(Default)]
 pub struct TypeChecker {
     errors: Vec<TypeCheckError>,
     current_function: Option<String>,
@@ -35,10 +36,7 @@ pub struct TypeChecker {
 
 impl TypeChecker {
     pub fn new() -> Self {
-        Self {
-            errors: Vec::new(),
-            current_function: None,
-        }
+        Self::default()
     }
 
     fn push_error(&mut self, error: TypeError) {
@@ -105,7 +103,7 @@ impl TypeChecker {
                             self.push_error(TypeError::DuplicateLetBinding { name });
                         }
                     }
-                    if let Some(ty) = self.infer(&ctx, &binding.expr) {
+                    if let Some(ty) = self.infer(ctx, &binding.expr) {
                         self.check_let_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
@@ -233,7 +231,7 @@ impl TypeChecker {
             }
             Expr::NatRec(_n, _z, _s) => {
                 self.check(ctx, _n, &Type::Nat);
-                let z_ty = self.infer(ctx, &_z)?;
+                let z_ty = self.infer(ctx, _z)?;
                 self.check(
                     ctx,
                     _s,
@@ -686,8 +684,8 @@ impl TypeChecker {
                     None => self.push_error(TypeError::AmbiguousList { expr: e.clone() }),
                 }
             }
-            Expr::Match { expr, cases } => match self.infer(ctx, expr) {
-                Some(scrutinee_ty) => {
+            Expr::Match { expr, cases } => {
+                if let Some(scrutinee_ty) = self.infer(ctx, expr) {
                     if cases.is_empty() {
                         self.push_error(TypeError::IllegalEmptyMatching { expr: expr.clone() });
                     } else {
@@ -704,8 +702,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                None => (),
-            },
+            }
             Expr::Let(bindings, body) => {
                 let mut local_ctx = ctx.clone();
                 let mut seen_names: HashSet<String> = HashSet::new();
@@ -715,7 +712,7 @@ impl TypeChecker {
                             self.push_error(TypeError::DuplicateLetBinding { name });
                         }
                     }
-                    if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
+                    if let Some(ty) = self.infer(ctx, &binding.expr) {
                         self.check_let_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
                     }
@@ -794,7 +791,7 @@ impl TypeChecker {
         for decl in local_decls {
             self.check_decl(&local_ctx, decl);
         }
-        self.check(&local_ctx, body, &return_type.as_type());
+        self.check(&local_ctx, body, return_type.as_type());
     }
 
     fn validate_type(&mut self, ty: &Type) {
@@ -1029,10 +1026,7 @@ impl TypeChecker {
             reversed_witness.extend(types.iter().rev().map(|_| "_".to_string()));
             return true;
         }
-        if matrix
-            .iter()
-            .any(|row| row.iter().all(|p| Self::is_catch_all(p)))
-        {
+        if matrix.iter().any(|row| row.iter().all(Self::is_catch_all)) {
             return false;
         }
 
@@ -1733,8 +1727,7 @@ impl TypeChecker {
         if let Some(Decl::Fun(f)) = prog
             .decls
             .iter()
-            .filter(|d| matches!(d, Decl::Fun(f) if f.name == "main" && f.params.len() != 1))
-            .next()
+            .find(|d| matches!(d, Decl::Fun(f) if f.name == "main" && f.params.len() != 1))
         {
             self.push_error(TypeError::IncorrectArityOfMain {
                 got: f.params.len(),
