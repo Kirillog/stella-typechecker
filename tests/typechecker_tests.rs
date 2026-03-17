@@ -6,7 +6,7 @@ fn typecheck(src: &str) -> Vec<TypeCheckError> {
     let prog = parser::ProgramParser::new()
         .parse(src)
         .expect("parse failed");
-    TypeChecker::new().check_program(&prog)
+    TypeChecker::new().check_program(&prog, src)
 }
 
 fn has_error<F: Fn(&TypeError) -> bool>(errors: &[TypeCheckError], pred: F) -> bool {
@@ -33,7 +33,7 @@ fn test_error_missing_main() {
 fn test_error_undefined_variable() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return x }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::UndefinedVariable(_))),
+        has_error(&errors, |e| matches!(e, TypeError::UndefinedVariable { .. })),
         "expected UndefinedVariable, got: {errors:?}"
     );
 }

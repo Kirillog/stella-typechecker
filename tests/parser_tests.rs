@@ -57,102 +57,102 @@ fn test_program_multiple_fns() {
 
 #[test]
 fn test_const_true() {
-    assert!(matches!(parse_expr("true"), Expr::ConstTrue));
+    assert!(matches!(parse_expr("true").node, ExprKind::ConstTrue));
 }
 
 #[test]
 fn test_const_false() {
-    assert!(matches!(parse_expr("false"), Expr::ConstFalse));
+    assert!(matches!(parse_expr("false").node, ExprKind::ConstFalse));
 }
 
 #[test]
 fn test_const_unit() {
-    assert!(matches!(parse_expr("unit"), Expr::ConstUnit));
+    assert!(matches!(parse_expr("unit").node, ExprKind::ConstUnit));
 }
 
 #[test]
 fn test_const_int() {
-    assert!(matches!(parse_expr("42"), Expr::ConstInt(42)));
+    assert!(matches!(parse_expr("42").node, ExprKind::ConstInt(42)));
 }
 
 #[test]
 fn test_var() {
-    assert!(matches!(parse_expr("x"), Expr::Var(ref s) if s == "x"));
+    assert!(matches!(parse_expr("x").node, ExprKind::Var(ref s) if s == "x"));
 }
 
 #[test]
 fn test_addition() {
-    assert!(matches!(parse_expr("1 + 2"), Expr::Add(_, _)));
+    assert!(matches!(parse_expr("1 + 2").node, ExprKind::Add(_, _)));
 }
 
 #[test]
 fn test_subtraction() {
-    assert!(matches!(parse_expr("5 - 3"), Expr::Subtract(_, _)));
+    assert!(matches!(parse_expr("5 - 3").node, ExprKind::Subtract(_, _)));
 }
 
 #[test]
 fn test_multiplication() {
-    assert!(matches!(parse_expr("4 * 7"), Expr::Multiply(_, _)));
+    assert!(matches!(parse_expr("4 * 7").node, ExprKind::Multiply(_, _)));
 }
 
 #[test]
 fn test_division() {
-    assert!(matches!(parse_expr("8 / 2"), Expr::Divide(_, _)));
+    assert!(matches!(parse_expr("8 / 2").node, ExprKind::Divide(_, _)));
 }
 
 #[test]
 fn test_add_left_assoc() {
-    match parse_expr("1 + 2 + 3") {
-        Expr::Add(lhs, _) => assert!(matches!(*lhs, Expr::Add(_, _))),
+    match parse_expr("1 + 2 + 3").node {
+        ExprKind::Add(lhs, _) => assert!(matches!(lhs.node, ExprKind::Add(_, _))),
         _ => panic!("expected Add"),
     }
 }
 
 #[test]
 fn test_mul_higher_prec_than_add() {
-    match parse_expr("1 + 2 * 3") {
-        Expr::Add(_, rhs) => assert!(matches!(*rhs, Expr::Multiply(_, _))),
+    match parse_expr("1 + 2 * 3").node {
+        ExprKind::Add(_, rhs) => assert!(matches!(rhs.node, ExprKind::Multiply(_, _))),
         _ => panic!("expected Add at top level"),
     }
 }
 
 #[test]
 fn test_less_than() {
-    assert!(matches!(parse_expr("a < b"), Expr::LessThan(_, _)));
+    assert!(matches!(parse_expr("a < b").node, ExprKind::LessThan(_, _)));
 }
 
 #[test]
 fn test_equal() {
-    assert!(matches!(parse_expr("a == b"), Expr::Equal(_, _)));
+    assert!(matches!(parse_expr("a == b").node, ExprKind::Equal(_, _)));
 }
 
 #[test]
 fn test_not_equal() {
-    assert!(matches!(parse_expr("a != b"), Expr::NotEqual(_, _)));
+    assert!(matches!(parse_expr("a != b").node, ExprKind::NotEqual(_, _)));
 }
 
 #[test]
 fn test_logic_or() {
-    assert!(matches!(parse_expr("a or b"), Expr::LogicOr(_, _)));
+    assert!(matches!(parse_expr("a or b").node, ExprKind::LogicOr(_, _)));
 }
 
 #[test]
 fn test_logic_and() {
-    assert!(matches!(parse_expr("a and b"), Expr::LogicAnd(_, _)));
+    assert!(matches!(parse_expr("a and b").node, ExprKind::LogicAnd(_, _)));
 }
 
 #[test]
 fn test_logic_not() {
-    assert!(matches!(parse_expr("not(x)"), Expr::LogicNot(_)));
+    assert!(matches!(parse_expr("not(x)").node, ExprKind::LogicNot(_)));
 }
 
 #[test]
 fn test_if_expr() {
-    match parse_expr("if true then 1 else 0") {
-        Expr::If { cond, then_, else_ } => {
-            assert!(matches!(*cond, Expr::ConstTrue));
-            assert!(matches!(*then_, Expr::ConstInt(1)));
-            assert!(matches!(*else_, Expr::ConstInt(0)));
+    match parse_expr("if true then 1 else 0").node {
+        ExprKind::If { cond, then_, else_ } => {
+            assert!(matches!(cond.node, ExprKind::ConstTrue));
+            assert!(matches!(then_.node, ExprKind::ConstInt(1)));
+            assert!(matches!(else_.node, ExprKind::ConstInt(0)));
         }
         _ => panic!("expected If"),
     }
@@ -160,11 +160,11 @@ fn test_if_expr() {
 
 #[test]
 fn test_abstraction() {
-    match parse_expr("fn(x : Nat) { return x }") {
-        Expr::Abstraction { params, body } => {
+    match parse_expr("fn(x : Nat) { return x }").node {
+        ExprKind::Abstraction { params, body } => {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
-            assert!(matches!(*body, Expr::Var(ref s) if s == "x"));
+            assert!(matches!(body.node, ExprKind::Var(ref s) if s == "x"));
         }
         _ => panic!("expected Abstraction"),
     }
@@ -172,17 +172,17 @@ fn test_abstraction() {
 
 #[test]
 fn test_abstraction_multi_param() {
-    match parse_expr("fn(x : Nat, y : Nat) { return x }") {
-        Expr::Abstraction { params, .. } => assert_eq!(params.len(), 2),
+    match parse_expr("fn(x : Nat, y : Nat) { return x }").node {
+        ExprKind::Abstraction { params, .. } => assert_eq!(params.len(), 2),
         _ => panic!("expected Abstraction"),
     }
 }
 
 #[test]
 fn test_application() {
-    match parse_expr("f(x)") {
-        Expr::Application { func, args } => {
-            assert!(matches!(*func, Expr::Var(ref s) if s == "f"));
+    match parse_expr("f(x)").node {
+        ExprKind::Application { func, args } => {
+            assert!(matches!(func.node, ExprKind::Var(ref s) if s == "f"));
             assert_eq!(args.len(), 1);
         }
         _ => panic!("expected Application"),
@@ -191,18 +191,18 @@ fn test_application() {
 
 #[test]
 fn test_application_multi_args() {
-    match parse_expr("f(x, y, z)") {
-        Expr::Application { args, .. } => assert_eq!(args.len(), 3),
+    match parse_expr("f(x, y, z)").node {
+        ExprKind::Application { args, .. } => assert_eq!(args.len(), 3),
         _ => panic!("expected Application"),
     }
 }
 
 #[test]
 fn test_let_expr() {
-    match parse_expr("let x = 1 in x") {
-        Expr::Let(bindings, body) => {
+    match parse_expr("let x = 1 in x").node {
+        ExprKind::Let(bindings, body) => {
             assert_eq!(bindings.len(), 1);
-            assert!(matches!(*body, Expr::Var(_)));
+            assert!(matches!(body.node, ExprKind::Var(_)));
         }
         _ => panic!("expected Let"),
     }
@@ -210,16 +210,16 @@ fn test_let_expr() {
 
 #[test]
 fn test_tuple() {
-    match parse_expr("{1, 2, 3}") {
-        Expr::Tuple(elems) => assert_eq!(elems.len(), 3),
+    match parse_expr("{1, 2, 3}").node {
+        ExprKind::Tuple(elems) => assert_eq!(elems.len(), 3),
         _ => panic!("expected Tuple"),
     }
 }
 
 #[test]
 fn test_record() {
-    match parse_expr("{x = 1, y = 2}") {
-        Expr::Record(fields) => {
+    match parse_expr("{x = 1, y = 2}").node {
+        ExprKind::Record(fields) => {
             assert_eq!(fields.len(), 2);
             assert_eq!(fields[0].name, "x");
             assert_eq!(fields[1].name, "y");
@@ -230,90 +230,90 @@ fn test_record() {
 
 #[test]
 fn test_dot_record() {
-    match parse_expr("r.field") {
-        Expr::DotRecord(_, field) => assert_eq!(field, "field"),
+    match parse_expr("r.field").node {
+        ExprKind::DotRecord(_, field) => assert_eq!(field, "field"),
         _ => panic!("expected DotRecord"),
     }
 }
 
 #[test]
 fn test_dot_tuple() {
-    match parse_expr("t.0") {
-        Expr::DotTuple(_, idx) => assert_eq!(idx, 0),
+    match parse_expr("t.0").node {
+        ExprKind::DotTuple(_, idx) => assert_eq!(idx, 0),
         _ => panic!("expected DotTuple"),
     }
 }
 
 #[test]
 fn test_empty_list() {
-    assert!(matches!(parse_expr("[]"), Expr::List(ref v) if v.is_empty()));
+    assert!(matches!(parse_expr("[]").node, ExprKind::List(ref v) if v.is_empty()));
 }
 
 #[test]
 fn test_list_literals() {
-    match parse_expr("[1, 2, 3]") {
-        Expr::List(elems) => assert_eq!(elems.len(), 3),
+    match parse_expr("[1, 2, 3]").node {
+        ExprKind::List(elems) => assert_eq!(elems.len(), 3),
         _ => panic!("expected List"),
     }
 }
 
 #[test]
 fn test_cons() {
-    assert!(matches!(parse_expr("cons(1, [])"), Expr::ConsList(_, _)));
+    assert!(matches!(parse_expr("cons(1, [])").node, ExprKind::ConsList(_, _)));
 }
 
 #[test]
 fn test_list_head() {
-    assert!(matches!(parse_expr("List::head(xs)"), Expr::Head(_)));
+    assert!(matches!(parse_expr("List::head(xs)").node, ExprKind::Head(_)));
 }
 
 #[test]
 fn test_list_tail() {
-    assert!(matches!(parse_expr("List::tail(xs)"), Expr::Tail(_)));
+    assert!(matches!(parse_expr("List::tail(xs)").node, ExprKind::Tail(_)));
 }
 
 #[test]
 fn test_list_isempty() {
-    assert!(matches!(parse_expr("List::isempty(xs)"), Expr::IsEmpty(_)));
+    assert!(matches!(parse_expr("List::isempty(xs)").node, ExprKind::IsEmpty(_)));
 }
 
 #[test]
 fn test_succ() {
-    assert!(matches!(parse_expr("succ(0)"), Expr::Succ(_)));
+    assert!(matches!(parse_expr("succ(0)").node, ExprKind::Succ(_)));
 }
 
 #[test]
 fn test_nat_pred() {
-    assert!(matches!(parse_expr("Nat::pred(n)"), Expr::Pred(_)));
+    assert!(matches!(parse_expr("Nat::pred(n)").node, ExprKind::Pred(_)));
 }
 
 #[test]
 fn test_nat_iszero() {
-    assert!(matches!(parse_expr("Nat::iszero(n)"), Expr::IsZero(_)));
+    assert!(matches!(parse_expr("Nat::iszero(n)").node, ExprKind::IsZero(_)));
 }
 
 #[test]
 fn test_nat_rec() {
     assert!(matches!(
-        parse_expr("Nat::rec(n, 0, f)"),
-        Expr::NatRec(_, _, _)
+        parse_expr("Nat::rec(n, 0, f)").node,
+        ExprKind::NatRec(_, _, _)
     ));
 }
 
 #[test]
 fn test_inl() {
-    assert!(matches!(parse_expr("inl(x)"), Expr::Inl(_)));
+    assert!(matches!(parse_expr("inl(x)").node, ExprKind::Inl(_)));
 }
 
 #[test]
 fn test_inr() {
-    assert!(matches!(parse_expr("inr(x)"), Expr::Inr(_)));
+    assert!(matches!(parse_expr("inr(x)").node, ExprKind::Inr(_)));
 }
 
 #[test]
 fn test_variant_no_payload() {
-    match parse_expr("<| none |>") {
-        Expr::Variant { label, payload } => {
+    match parse_expr("<| none |>").node {
+        ExprKind::Variant { label, payload } => {
             assert_eq!(label, "none");
             assert!(payload.is_none());
         }
@@ -323,8 +323,8 @@ fn test_variant_no_payload() {
 
 #[test]
 fn test_variant_with_payload() {
-    match parse_expr("<| some = 42 |>") {
-        Expr::Variant { label, payload } => {
+    match parse_expr("<| some = 42 |>").node {
+        ExprKind::Variant { label, payload } => {
             assert_eq!(label, "some");
             assert!(payload.is_some());
         }
@@ -334,53 +334,53 @@ fn test_variant_with_payload() {
 
 #[test]
 fn test_match_expr() {
-    match parse_expr("match x { true => 1 | false => 0 }") {
-        Expr::Match { cases, .. } => assert_eq!(cases.len(), 2),
+    match parse_expr("match x { true => 1 | false => 0 }").node {
+        ExprKind::Match { cases, .. } => assert_eq!(cases.len(), 2),
         _ => panic!("expected Match"),
     }
 }
 
 #[test]
 fn test_sequence() {
-    assert!(matches!(parse_expr("1; 2"), Expr::Sequence(_, _)));
+    assert!(matches!(parse_expr("1; 2").node, ExprKind::Sequence(_, _)));
 }
 
 #[test]
 fn test_type_asc() {
-    assert!(matches!(parse_expr("x as Nat"), Expr::TypeAsc(_, _)));
+    assert!(matches!(parse_expr("x as Nat").node, ExprKind::TypeAsc(_, _)));
 }
 
 #[test]
 fn test_fix() {
-    assert!(matches!(parse_expr("fix(f)"), Expr::Fix(_)));
+    assert!(matches!(parse_expr("fix(f)").node, ExprKind::Fix(_)));
 }
 
 #[test]
 fn test_fold() {
-    assert!(matches!(parse_expr("fold[µ X . Nat] x"), Expr::Fold { .. }));
+    assert!(matches!(parse_expr("fold[µ X . Nat] x").node, ExprKind::Fold { .. }));
 }
 
 #[test]
 fn test_unfold() {
     assert!(matches!(
-        parse_expr("unfold[µ X . Nat] x"),
-        Expr::Unfold { .. }
+        parse_expr("unfold[µ X . Nat] x").node,
+        ExprKind::Unfold { .. }
     ));
 }
 
 #[test]
 fn test_panic() {
-    assert!(matches!(parse_expr("panic!"), Expr::Panic));
+    assert!(matches!(parse_expr("panic!").node, ExprKind::Panic));
 }
 
 #[test]
 fn test_ref() {
-    assert!(matches!(parse_expr("new(x)"), Expr::Ref(_)));
+    assert!(matches!(parse_expr("new(x)").node, ExprKind::Ref(_)));
 }
 
 #[test]
 fn test_deref() {
-    assert!(matches!(parse_expr("*x"), Expr::Deref(_)));
+    assert!(matches!(parse_expr("*x").node, ExprKind::Deref(_)));
 }
 
 #[test]

@@ -1,3 +1,53 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize) -> Self {
+        Span { start, end }
+    }
+
+    pub fn start_line_col(&self, src: &str) -> (u32, u32) {
+        offset_to_line_col(src, self.start)
+    }
+
+    pub fn end_line_col(&self, src: &str) -> (u32, u32) {
+        offset_to_line_col(src, self.end)
+    }
+}
+
+fn offset_to_line_col(src: &str, offset: usize) -> (u32, u32) {
+    let offset = offset.min(src.len());
+    let mut line: u32 = 1;
+    let mut col: u32 = 1;
+    for (i, ch) in src.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += ch.len_utf8() as u32;
+        }
+    }
+    (line, col)
+}
+
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, start: usize, end: usize) -> Self {
+        Spanned { node, span: Span::new(start, end) }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Program {
     pub language_decl: LanguageDecl,
@@ -82,7 +132,7 @@ pub enum ThrowType {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub enum ExprKind {
     // --- Expr ---
     /// `e1 ; e2`
     Sequence(Box<Expr>, Box<Expr>),
@@ -235,6 +285,9 @@ pub enum Expr {
     /// An identifier reference
     Var(String),
 }
+
+/// An expression together with its source span.
+pub type Expr = Spanned<ExprKind>;
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
@@ -415,28 +468,28 @@ impl fmt::Display for Type {
     }
 }
 
-impl fmt::Display for Expr {
+impl fmt::Display for ExprKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expr::ConstTrue => write!(f, "true"),
-            Expr::ConstFalse => write!(f, "false"),
-            Expr::ConstUnit => write!(f, "unit"),
-            Expr::ConstInt(n) => write!(f, "{}", n),
-            Expr::ConstMemory(s) => write!(f, "<{}>", s),
-            Expr::Var(name) => write!(f, "{}", name),
-            Expr::Panic => write!(f, "panic!"),
+            ExprKind::ConstTrue => write!(f, "true"),
+            ExprKind::ConstFalse => write!(f, "false"),
+            ExprKind::ConstUnit => write!(f, "unit"),
+            ExprKind::ConstInt(n) => write!(f, "{}", n),
+            ExprKind::ConstMemory(s) => write!(f, "<{}>", s),
+            ExprKind::Var(name) => write!(f, "{}", name),
+            ExprKind::Panic => write!(f, "panic!"),
 
-            Expr::Sequence(e1, e2) => write!(f, "{}; {}", e1, e2),
-            Expr::Assign(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
+            ExprKind::Sequence(e1, e2) => write!(f, "{}; {}", e1, e2),
+            ExprKind::Assign(lhs, rhs) => write!(f, "{} := {}", lhs, rhs),
 
-            Expr::If { cond, then_, else_ } => {
+            ExprKind::If { cond, then_, else_ } => {
                 write!(f, "if {} then {} else {}", cond, then_, else_)
             }
 
-            Expr::TypeAsc(e, ty) => write!(f, "{} as {}", e, ty),
-            Expr::TypeCast(e, ty) => write!(f, "{} cast as {}", e, ty),
+            ExprKind::TypeAsc(e, ty) => write!(f, "{} as {}", e, ty),
+            ExprKind::TypeCast(e, ty) => write!(f, "{} cast as {}", e, ty),
 
-            Expr::Abstraction { params, body } => {
+            ExprKind::Abstraction { params, body } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -447,7 +500,7 @@ impl fmt::Display for Expr {
                 write!(f, ") {{ return {} }}", body)
             }
 
-            Expr::Application { func, args } => {
+            ExprKind::Application { func, args } => {
                 write!(f, "{}(", func)?;
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -458,7 +511,7 @@ impl fmt::Display for Expr {
                 write!(f, ")")
             }
 
-            Expr::TypeApplication { expr, type_args } => {
+            ExprKind::TypeApplication { expr, type_args } => {
                 write!(f, "{}[", expr)?;
                 for (i, t) in type_args.iter().enumerate() {
                     if i > 0 {
@@ -469,7 +522,7 @@ impl fmt::Display for Expr {
                 write!(f, "]")
             }
 
-            Expr::TypeAbstraction(params, body) => {
+            ExprKind::TypeAbstraction(params, body) => {
                 write!(f, "generic [")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -480,7 +533,7 @@ impl fmt::Display for Expr {
                 write!(f, "] {}", body)
             }
 
-            Expr::Let(bindings, body) => {
+            ExprKind::Let(bindings, body) => {
                 write!(f, "let ")?;
                 for (i, b) in bindings.iter().enumerate() {
                     if i > 0 {
@@ -491,7 +544,7 @@ impl fmt::Display for Expr {
                 write!(f, " in {}", body)
             }
 
-            Expr::LetRec(bindings, body) => {
+            ExprKind::LetRec(bindings, body) => {
                 write!(f, "letrec ")?;
                 for (i, b) in bindings.iter().enumerate() {
                     if i > 0 {
@@ -502,7 +555,7 @@ impl fmt::Display for Expr {
                 write!(f, " in {}", body)
             }
 
-            Expr::Match { expr, cases } => {
+            ExprKind::Match { expr, cases } => {
                 write!(f, "match {} {{", expr)?;
                 for (i, c) in cases.iter().enumerate() {
                     if i > 0 {
@@ -513,7 +566,7 @@ impl fmt::Display for Expr {
                 write!(f, " }}")
             }
 
-            Expr::Tuple(elems) => {
+            ExprKind::Tuple(elems) => {
                 write!(f, "{{")?;
                 for (i, e) in elems.iter().enumerate() {
                     if i > 0 {
@@ -524,7 +577,7 @@ impl fmt::Display for Expr {
                 write!(f, "}}")
             }
 
-            Expr::Record(bindings) => {
+            ExprKind::Record(bindings) => {
                 write!(f, "{{")?;
                 for (i, b) in bindings.iter().enumerate() {
                     if i > 0 {
@@ -535,10 +588,10 @@ impl fmt::Display for Expr {
                 write!(f, "}}")
             }
 
-            Expr::DotRecord(e, field) => write!(f, "{}.{}", e, field),
-            Expr::DotTuple(e, idx) => write!(f, "{}.{}", e, idx),
+            ExprKind::DotRecord(e, field) => write!(f, "{}.{}", e, field),
+            ExprKind::DotTuple(e, idx) => write!(f, "{}.{}", e, idx),
 
-            Expr::List(elems) => {
+            ExprKind::List(elems) => {
                 write!(f, "[")?;
                 for (i, e) in elems.iter().enumerate() {
                     if i > 0 {
@@ -549,35 +602,35 @@ impl fmt::Display for Expr {
                 write!(f, "]")
             }
 
-            Expr::ConsList(head, tail) => write!(f, "cons({}, {})", head, tail),
-            Expr::Head(e) => write!(f, "List::head({})", e),
-            Expr::Tail(e) => write!(f, "List::tail({})", e),
-            Expr::IsEmpty(e) => write!(f, "List::isempty({})", e),
+            ExprKind::ConsList(head, tail) => write!(f, "cons({}, {})", head, tail),
+            ExprKind::Head(e) => write!(f, "List::head({})", e),
+            ExprKind::Tail(e) => write!(f, "List::tail({})", e),
+            ExprKind::IsEmpty(e) => write!(f, "List::isempty({})", e),
 
-            Expr::Inl(e) => write!(f, "inl({})", e),
-            Expr::Inr(e) => write!(f, "inr({})", e),
+            ExprKind::Inl(e) => write!(f, "inl({})", e),
+            ExprKind::Inr(e) => write!(f, "inr({})", e),
 
-            Expr::Variant {
+            ExprKind::Variant {
                 label,
                 payload: Some(e),
             } => write!(f, "<| {} = {} |>", label, e),
-            Expr::Variant {
+            ExprKind::Variant {
                 label,
                 payload: None,
             } => write!(f, "<| {} |>", label),
 
-            Expr::Succ(e) => write!(f, "succ({})", e),
-            Expr::Pred(e) => write!(f, "Nat::pred({})", e),
-            Expr::IsZero(e) => write!(f, "Nat::iszero({})", e),
-            Expr::NatRec(n, z, s) => write!(f, "Nat::rec({}, {}, {})", n, z, s),
+            ExprKind::Succ(e) => write!(f, "succ({})", e),
+            ExprKind::Pred(e) => write!(f, "Nat::pred({})", e),
+            ExprKind::IsZero(e) => write!(f, "Nat::iszero({})", e),
+            ExprKind::NatRec(n, z, s) => write!(f, "Nat::rec({}, {}, {})", n, z, s),
 
-            Expr::Fix(e) => write!(f, "fix({})", e),
+            ExprKind::Fix(e) => write!(f, "fix({})", e),
 
-            Expr::Ref(e) => write!(f, "new({})", e),
-            Expr::Deref(e) => write!(f, "*{}", e),
+            ExprKind::Ref(e) => write!(f, "new({})", e),
+            ExprKind::Deref(e) => write!(f, "*{}", e),
 
-            Expr::Throw(e) => write!(f, "throw({})", e),
-            Expr::TryCatch {
+            ExprKind::Throw(e) => write!(f, "throw({})", e),
+            ExprKind::TryCatch {
                 try_expr,
                 pattern,
                 catch_expr,
@@ -588,13 +641,13 @@ impl fmt::Display for Expr {
                     try_expr, pattern, catch_expr
                 )
             }
-            Expr::TryWith {
+            ExprKind::TryWith {
                 try_expr,
                 with_expr,
             } => {
                 write!(f, "try {{ {} }} with {{ {} }}", try_expr, with_expr)
             }
-            Expr::TryCastAs {
+            ExprKind::TryCastAs {
                 try_expr,
                 ty,
                 pattern,
@@ -608,23 +661,29 @@ impl fmt::Display for Expr {
                 )
             }
 
-            Expr::Fold { ty, expr } => write!(f, "fold[{}] {}", ty, expr),
-            Expr::Unfold { ty, expr } => write!(f, "unfold[{}] {}", ty, expr),
+            ExprKind::Fold { ty, expr } => write!(f, "fold[{}] {}", ty, expr),
+            ExprKind::Unfold { ty, expr } => write!(f, "unfold[{}] {}", ty, expr),
 
-            Expr::Add(l, r) => write!(f, "{} + {}", l, r),
-            Expr::Subtract(l, r) => write!(f, "{} - {}", l, r),
-            Expr::Multiply(l, r) => write!(f, "{} * {}", l, r),
-            Expr::Divide(l, r) => write!(f, "{} / {}", l, r),
-            Expr::LessThan(l, r) => write!(f, "{} < {}", l, r),
-            Expr::LessThanOrEqual(l, r) => write!(f, "{} <= {}", l, r),
-            Expr::GreaterThan(l, r) => write!(f, "{} > {}", l, r),
-            Expr::GreaterThanOrEqual(l, r) => write!(f, "{} >= {}", l, r),
-            Expr::Equal(l, r) => write!(f, "{} == {}", l, r),
-            Expr::NotEqual(l, r) => write!(f, "{} != {}", l, r),
-            Expr::LogicAnd(l, r) => write!(f, "{} && {}", l, r),
-            Expr::LogicOr(l, r) => write!(f, "{} || {}", l, r),
-            Expr::LogicNot(e) => write!(f, "not({})", e),
+            ExprKind::Add(l, r) => write!(f, "{} + {}", l, r),
+            ExprKind::Subtract(l, r) => write!(f, "{} - {}", l, r),
+            ExprKind::Multiply(l, r) => write!(f, "{} * {}", l, r),
+            ExprKind::Divide(l, r) => write!(f, "{} / {}", l, r),
+            ExprKind::LessThan(l, r) => write!(f, "{} < {}", l, r),
+            ExprKind::LessThanOrEqual(l, r) => write!(f, "{} <= {}", l, r),
+            ExprKind::GreaterThan(l, r) => write!(f, "{} > {}", l, r),
+            ExprKind::GreaterThanOrEqual(l, r) => write!(f, "{} >= {}", l, r),
+            ExprKind::Equal(l, r) => write!(f, "{} == {}", l, r),
+            ExprKind::NotEqual(l, r) => write!(f, "{} != {}", l, r),
+            ExprKind::LogicAnd(l, r) => write!(f, "{} && {}", l, r),
+            ExprKind::LogicOr(l, r) => write!(f, "{} || {}", l, r),
+            ExprKind::LogicNot(e) => write!(f, "not({})", e),
         }
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.node, f)
     }
 }
 

@@ -19,7 +19,7 @@ fn main() {
         }
     };
 
-    let errors = typechecker::TypeChecker::new().check_program(&program);
+    let errors = typechecker::TypeChecker::new().check_program(&program, &src);
     if errors.is_empty() {
         println!("Type OK");
     } else {

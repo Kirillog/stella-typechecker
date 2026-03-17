@@ -246,16 +246,16 @@ MatchCases: Vec<MatchCase> = {
 };
 
 pub Expr: Expr = {
-    <e1:Expr1> ";" <e2:Expr>
-        => Expr::Sequence(Box::new(e1), Box::new(e2)),
+    <l:@L> <e1:Expr1> ";" <e2:Expr> <r:@R>
+        => Spanned::new(ExprKind::Sequence(Box::new(e1), Box::new(e2)), l, r),
     <e:Expr1> ";"
         => e,
-    "let" <bs:Comma1<PatternBinding>> "in" <body:Expr>
-        => Expr::Let(bs, Box::new(body)),
-    "letrec" <bs:Comma1<PatternBinding>> "in" <body:Expr>
-        => Expr::LetRec(bs, Box::new(body)),
-    "generic" "[" <params:Comma<StellaIdent>> "]" <body:Expr>
-        => Expr::TypeAbstraction(params, Box::new(body)),
+    <l:@L> "let" <bs:Comma1<PatternBinding>> "in" <body:Expr> <r:@R>
+        => Spanned::new(ExprKind::Let(bs, Box::new(body)), l, r),
+    <l:@L> "letrec" <bs:Comma1<PatternBinding>> "in" <body:Expr> <r:@R>
+        => Spanned::new(ExprKind::LetRec(bs, Box::new(body)), l, r),
+    <l:@L> "generic" "[" <params:Comma<StellaIdent>> "]" <body:Expr> <r:@R>
+        => Spanned::new(ExprKind::TypeAbstraction(params, Box::new(body)), l, r),
     Expr1,
 };
 
@@ -265,37 +265,38 @@ PatternBinding: PatternBinding = {
 };
 
 Expr1: Expr = {
-    <lhs:Expr2> ":=" <rhs:Expr1>
-        => Expr::Assign(Box::new(lhs), Box::new(rhs)),
-    "if" <c:Expr1> "then" <t:Expr1> "else" <e:Expr1>
-        => Expr::If { cond: Box::new(c), then_: Box::new(t), else_: Box::new(e) },
+    <l:@L> <lhs:Expr2> ":=" <rhs:Expr1> <r:@R>
+        => Spanned::new(ExprKind::Assign(Box::new(lhs), Box::new(rhs)), l, r),
+    <l:@L> "if" <c:Expr1> "then" <t:Expr1> "else" <e:Expr1> <r:@R>
+        => Spanned::new(ExprKind::If { cond: Box::new(c), then_: Box::new(t), else_: Box::new(e) }, l, r),
     Expr2,
 };
 
 Expr2: Expr = {
-    <a:Expr3> "<"  <b:Expr3> => Expr::LessThan(Box::new(a), Box::new(b)),
-    <a:Expr3> "<=" <b:Expr3> => Expr::LessThanOrEqual(Box::new(a), Box::new(b)),
-    <a:Expr3> ">"  <b:Expr3> => Expr::GreaterThan(Box::new(a), Box::new(b)),
-    <a:Expr3> ">=" <b:Expr3> => Expr::GreaterThanOrEqual(Box::new(a), Box::new(b)),
-    <a:Expr3> "==" <b:Expr3> => Expr::Equal(Box::new(a), Box::new(b)),
-    <a:Expr3> "!=" <b:Expr3> => Expr::NotEqual(Box::new(a), Box::new(b)),
+    <l:@L> <a:Expr3> "<"  <b:Expr3> <r:@R> => Spanned::new(ExprKind::LessThan(Box::new(a), Box::new(b)), l, r),
+    <l:@L> <a:Expr3> "<=" <b:Expr3> <r:@R> => Spanned::new(ExprKind::LessThanOrEqual(Box::new(a), Box::new(b)), l, r),
+    <l:@L> <a:Expr3> ">"  <b:Expr3> <r:@R> => Spanned::new(ExprKind::GreaterThan(Box::new(a), Box::new(b)), l, r),
+    <l:@L> <a:Expr3> ">=" <b:Expr3> <r:@R> => Spanned::new(ExprKind::GreaterThanOrEqual(Box::new(a), Box::new(b)), l, r),
+    <l:@L> <a:Expr3> "==" <b:Expr3> <r:@R> => Spanned::new(ExprKind::Equal(Box::new(a), Box::new(b)), l, r),
+    <l:@L> <a:Expr3> "!=" <b:Expr3> <r:@R> => Spanned::new(ExprKind::NotEqual(Box::new(a), Box::new(b)), l, r),
     Expr3,
 };
 
+// NOTE: renamed sub-expr variables lhs/rhs to avoid collision with @L/@R captures l/r.
 Expr3: Expr = {
-    <l:Expr3> "+"   <r:Expr4>       => Expr::Add(Box::new(l), Box::new(r)),
-    <l:Expr3> "-"   <r:Expr4>       => Expr::Subtract(Box::new(l), Box::new(r)),
-    <l:Expr3> "or"  <r:Expr4>       => Expr::LogicOr(Box::new(l), Box::new(r)),
-    <e:Expr3> "as"       <t:Type2>  => Expr::TypeAsc(Box::new(e), Box::new(t)),
-    <e:Expr3> "cast" "as" <t:Type2> => Expr::TypeCast(Box::new(e), Box::new(t)),
-    "fn" "(" <params:Comma<ParamDecl>> ")" "{" "return" <body:Expr> "}"
-        => Expr::Abstraction { params, body: Box::new(body) },
-    "<|" <label:StellaIdent> <payload:ExprData> "|>"
-        => Expr::Variant { label, payload: payload.map(Box::new) },
-    "match" <e:Expr2> "{" <cases:MatchCases> "}"
-        => Expr::Match { expr: Box::new(e), cases },
-    "[" <items:Comma<Expr>> "]"
-        => Expr::List(items),
+    <l:@L> <lhs:Expr3> "+"   <rhs:Expr4> <r:@R>     => Spanned::new(ExprKind::Add(Box::new(lhs), Box::new(rhs)), l, r),
+    <l:@L> <lhs:Expr3> "-"   <rhs:Expr4> <r:@R>     => Spanned::new(ExprKind::Subtract(Box::new(lhs), Box::new(rhs)), l, r),
+    <l:@L> <lhs:Expr3> "or"  <rhs:Expr4> <r:@R>     => Spanned::new(ExprKind::LogicOr(Box::new(lhs), Box::new(rhs)), l, r),
+    <l:@L> <e:Expr3> "as"        <t:Type2> <r:@R>   => Spanned::new(ExprKind::TypeAsc(Box::new(e), Box::new(t)), l, r),
+    <l:@L> <e:Expr3> "cast" "as" <t:Type2> <r:@R>   => Spanned::new(ExprKind::TypeCast(Box::new(e), Box::new(t)), l, r),
+    <l:@L> "fn" "(" <params:Comma<ParamDecl>> ")" "{" "return" <body:Expr> "}" <r:@R>
+        => Spanned::new(ExprKind::Abstraction { params, body: Box::new(body) }, l, r),
+    <l:@L> "<|" <label:StellaIdent> <payload:ExprData> "|>" <r:@R>
+        => Spanned::new(ExprKind::Variant { label, payload: payload.map(Box::new) }, l, r),
+    <l:@L> "match" <e:Expr2> "{" <cases:MatchCases> "}" <r:@R>
+        => Spanned::new(ExprKind::Match { expr: Box::new(e), cases }, l, r),
+    <l:@L> "[" <items:Comma<Expr>> "]" <r:@R>
+        => Spanned::new(ExprKind::List(items), l, r),
     Expr4,
 };
 
@@ -304,85 +305,92 @@ ExprData: Option<Expr> = {
     => None,
 };
 
+// NOTE: renamed sub-expr variables lhs/rhs to avoid collision with @L/@R captures l/r.
 Expr4: Expr = {
-    <l:Expr4> "*"   <r:Expr5> => Expr::Multiply(Box::new(l), Box::new(r)),
-    <l:Expr4> "/"   <r:Expr5> => Expr::Divide(Box::new(l), Box::new(r)),
-    <l:Expr4> "and" <r:Expr5> => Expr::LogicAnd(Box::new(l), Box::new(r)),
+    <l:@L> <lhs:Expr4> "*"   <rhs:Expr5> <r:@R> => Spanned::new(ExprKind::Multiply(Box::new(lhs), Box::new(rhs)), l, r),
+    <l:@L> <lhs:Expr4> "/"   <rhs:Expr5> <r:@R> => Spanned::new(ExprKind::Divide(Box::new(lhs), Box::new(rhs)), l, r),
+    <l:@L> <lhs:Expr4> "and" <rhs:Expr5> <r:@R> => Spanned::new(ExprKind::LogicAnd(Box::new(lhs), Box::new(rhs)), l, r),
     Expr5,
 };
 
 Expr5: Expr = {
-    "new" "(" <e:Expr> ")" => Expr::Ref(Box::new(e)),
-    "*" <e:Expr5>          => Expr::Deref(Box::new(e)),
+    <l:@L> "new" "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Ref(Box::new(e)), l, r),
+    <l:@L> "*" <e:Expr5>          <r:@R> => Spanned::new(ExprKind::Deref(Box::new(e)), l, r),
     Expr6,
 };
 
 Expr6: Expr = {
-    <f:Expr6> "(" <args:Comma<Expr>> ")"
-        => Expr::Application { func: Box::new(f), args },
+    <l:@L> <f:Expr6> "(" <args:Comma<Expr>> ")" <r:@R>
+        => Spanned::new(ExprKind::Application { func: Box::new(f), args }, l, r),
 
-    <e:Expr6> "[" <ts:Comma<Type>> "]"
-        => Expr::TypeApplication { expr: Box::new(e), type_args: ts },
+    <l:@L> <e:Expr6> "[" <ts:Comma<Type>> "]" <r:@R>
+        => Spanned::new(ExprKind::TypeApplication { expr: Box::new(e), type_args: ts }, l, r),
 
-    <e:Expr6> "." <name:StellaIdent>
-        => Expr::DotRecord(Box::new(e), name),
+    <l:@L> <e:Expr6> "." <name:StellaIdent> <r:@R>
+        => Spanned::new(ExprKind::DotRecord(Box::new(e), name), l, r),
 
-    <e:Expr6> "." <n:IntLit>
-        => Expr::DotTuple(Box::new(e), usize::from_str(n).unwrap()),
+    <l:@L> <e:Expr6> "." <n:IntLit> <r:@R>
+        => Spanned::new(ExprKind::DotTuple(Box::new(e), usize::from_str(n).unwrap()), l, r),
 
-    "{" <items:Comma<Expr>> "}"
-        => Expr::Tuple(items),
+    <l:@L> "{" <items:Comma<Expr>> "}" <r:@R>
+        => Spanned::new(ExprKind::Tuple(items), l, r),
 
-    "{" <bindings:Comma1<Binding>> "}"
-        => Expr::Record(bindings),
+    <l:@L> "{" <bindings:Comma1<Binding>> "}" <r:@R>
+        => Spanned::new(ExprKind::Record(bindings), l, r),
 
-    "cons" "(" <h:Expr> "," <t:Expr> ")"
-        => Expr::ConsList(Box::new(h), Box::new(t)),
+    <l:@L> "cons" "(" <h:Expr> "," <t:Expr> ")" <r:@R>
+        => Spanned::new(ExprKind::ConsList(Box::new(h), Box::new(t)), l, r),
 
-    "List::head"    "(" <e:Expr> ")" => Expr::Head(Box::new(e)),
-    "List::isempty" "(" <e:Expr> ")" => Expr::IsEmpty(Box::new(e)),
-    "List::tail"    "(" <e:Expr> ")" => Expr::Tail(Box::new(e)),
+    <l:@L> "List::head"    "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Head(Box::new(e)), l, r),
+    <l:@L> "List::isempty" "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::IsEmpty(Box::new(e)), l, r),
+    <l:@L> "List::tail"    "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Tail(Box::new(e)), l, r),
 
-    "panic!" => Expr::Panic,
+    <l:@L> "panic!" <r:@R> => Spanned::new(ExprKind::Panic, l, r),
 
-    "throw" "(" <e:Expr> ")" => Expr::Throw(Box::new(e)),
+    <l:@L> "throw" "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Throw(Box::new(e)), l, r),
 
-    "try" "{" <body:Expr> "}" "catch" "{" <p:Pattern> "=>" <handler:Expr> "}"
-        => Expr::TryCatch {
+    <l:@L>
+        "try" "{" <body:Expr> "}" "catch" "{" <p:Pattern> "=>" <handler:Expr> "}"
+    <r:@R>
+        => Spanned::new(ExprKind::TryCatch {
             try_expr:   Box::new(body),
             pattern:    Box::new(p),
             catch_expr: Box::new(handler),
-        },
+        }, l, r),
 
-    "try" "{" <body:Expr> "}" "with" "{" <fallback:Expr> "}"
-        => Expr::TryWith { try_expr: Box::new(body), with_expr: Box::new(fallback) },
+    <l:@L>
+        "try" "{" <body:Expr> "}" "with" "{" <fallback:Expr> "}"
+    <r:@R>
+        => Spanned::new(ExprKind::TryWith { try_expr: Box::new(body), with_expr: Box::new(fallback) }, l, r),
 
-    "try" "{" <body:Expr> "}" "cast" "as" <ty:Type>
+    <l:@L>
+        "try" "{" <body:Expr> "}" "cast" "as" <ty:Type>
         "{" <p:Pattern> "=>" <handler:Expr> "}"
         "with" "{" <fallback:Expr> "}"
-        => Expr::TryCastAs {
+    <r:@R>
+        => Spanned::new(ExprKind::TryCastAs {
             try_expr:   Box::new(body),
             ty:         Box::new(ty),
             pattern:    Box::new(p),
             catch_expr: Box::new(handler),
             with_expr:  Box::new(fallback),
-        },
+        }, l, r),
 
-    "inl"  "(" <e:Expr> ")" => Expr::Inl(Box::new(e)),
-    "inr"  "(" <e:Expr> ")" => Expr::Inr(Box::new(e)),
-    "succ" "(" <e:Expr> ")" => Expr::Succ(Box::new(e)),
-    "not"  "(" <e:Expr> ")" => Expr::LogicNot(Box::new(e)),
+    <l:@L> "inl"  "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Inl(Box::new(e)), l, r),
+    <l:@L> "inr"  "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Inr(Box::new(e)), l, r),
+    <l:@L> "succ" "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Succ(Box::new(e)), l, r),
+    <l:@L> "not"  "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::LogicNot(Box::new(e)), l, r),
 
-    "Nat::pred"   "(" <e:Expr> ")" => Expr::Pred(Box::new(e)),
-    "Nat::iszero" "(" <e:Expr> ")" => Expr::IsZero(Box::new(e)),
+    <l:@L> "Nat::pred"   "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Pred(Box::new(e)), l, r),
+    <l:@L> "Nat::iszero" "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::IsZero(Box::new(e)), l, r),
 
-    "fix" "(" <e:Expr> ")" => Expr::Fix(Box::new(e)),
-    "Nat::rec" "(" <n:Expr> "," <z:Expr> "," <s:Expr> ")"
-        => Expr::NatRec(Box::new(n), Box::new(z), Box::new(s)),
-    "fold"   "[" <ty:Type> "]" <e:Expr7>
-        => Expr::Fold   { ty: Box::new(ty), expr: Box::new(e) },
-    "unfold" "[" <ty:Type> "]" <e:Expr7>
-        => Expr::Unfold { ty: Box::new(ty), expr: Box::new(e) },
+    <l:@L> "fix" "(" <e:Expr> ")" <r:@R> => Spanned::new(ExprKind::Fix(Box::new(e)), l, r),
+    <l:@L> "Nat::rec" "(" <n:Expr> "," <z:Expr> "," <s:Expr> ")" <r:@R>
+        => Spanned::new(ExprKind::NatRec(Box::new(n), Box::new(z), Box::new(s)), l, r),
+    <l:@L> "fold"   "[" <ty:Type> "]" <e:Expr7> <r:@R>
+        => Spanned::new(ExprKind::Fold   { ty: Box::new(ty), expr: Box::new(e) }, l, r),
+    <l:@L> "unfold" "[" <ty:Type> "]" <e:Expr7> <r:@R>
+        => Spanned::new(ExprKind::Unfold { ty: Box::new(ty), expr: Box::new(e) }, l, r),
     Expr7,
 };
 
@@ -392,12 +400,12 @@ Binding: Binding = {
 };
 
 Expr7: Expr = {
-    "true"              => Expr::ConstTrue,
-    "false"             => Expr::ConstFalse,
-    "unit"              => Expr::ConstUnit,
-    <n:IntLit>          => Expr::ConstInt(usize::from_str(n).unwrap()),
-    <m:MemAddr>         => Expr::ConstMemory(m.to_owned()),
-    <name:StellaIdent>  => Expr::Var(name),
+    <l:@L> "true"              <r:@R> => Spanned::new(ExprKind::ConstTrue, l, r),
+    <l:@L> "false"             <r:@R> => Spanned::new(ExprKind::ConstFalse, l, r),
+    <l:@L> "unit"              <r:@R> => Spanned::new(ExprKind::ConstUnit, l, r),
+    <l:@L> <n:IntLit>          <r:@R> => Spanned::new(ExprKind::ConstInt(usize::from_str(n).unwrap()), l, r),
+    <l:@L> <m:MemAddr>         <r:@R> => Spanned::new(ExprKind::ConstMemory(m.to_owned()), l, r),
+    <l:@L> <name:StellaIdent>  <r:@R> => Spanned::new(ExprKind::Var(name), l, r),
     "(" <e:Expr> ")"    => e,
 };
 

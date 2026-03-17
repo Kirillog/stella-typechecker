@@ -1,11 +1,13 @@
-use crate::ast::{Expr, Type};
+use crate::ast::{Expr, Pattern, Span, Type};
 
 use std::fmt;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct TypeCheckError {
     pub error: TypeError,
     pub in_function: Option<String>,
+    pub src: Rc<str>,
 }
 
 impl fmt::Display for TypeCheckError {
@@ -13,6 +15,10 @@ impl fmt::Display for TypeCheckError {
         write!(f, "{}", self.error)?;
         if let Some(func) = &self.in_function {
             write!(f, "\nin function `{}`", func)?;
+        }
+        if let Some(span) = self.error.primary_span() {
+            let (line, col) = span.start_line_col(&self.src);
+            write!(f, "\nat [{line}:{col}]")?;
         }
         Ok(())
     }
@@ -22,7 +28,10 @@ impl fmt::Display for TypeCheckError {
 pub enum TypeError {
     MissingMain,
 
-    UndefinedVariable(String),
+    UndefinedVariable {
+        name: String,
+        expr: Box<Expr>,
+    },
 
     UnexpectedTypeForExpression {
         expected: Type,
@@ -59,6 +68,7 @@ pub enum TypeError {
         param: String,
         expected: Type,
         got: Type,
+        expr: Box<Expr>,
     },
 
     UnexpectedTuple {
@@ -117,6 +127,7 @@ pub enum TypeError {
     UnexpectedTupleLength {
         expected: usize,
         got: usize,
+        expr: Box<Expr>,
     },
 
     AmbiguousSumType {
@@ -149,10 +160,12 @@ pub enum TypeError {
     UnexpectedPatternForType {
         pattern_desc: String,
         scrutinee_type: Type,
+        pat: Box<Pattern>,
     },
 
     DuplicateRecordFields {
         field: String,
+        expr: Box<Expr>,
     },
 
     DuplicateRecordTypeFields {
@@ -174,31 +187,38 @@ pub enum TypeError {
     IncorrectNumberOfArguments {
         expected: usize,
         got: usize,
+        expr: Box<Expr>,
     },
 
     UnexpectedNumberOfParametersInLambda {
         expected: usize,
         got: usize,
+        expr: Box<Expr>,
     },
 
     DuplicateRecordPatternFields {
         field: String,
+        pat: Box<Pattern>,
     },
 
     UnexpectedDataForNullaryLabel {
         label: String,
+        expr: Box<Expr>,
     },
 
     MissingDataForLabel {
         label: String,
+        expr: Box<Expr>,
     },
 
     UnexpectedNonNullaryVariantPattern {
         label: String,
+        pat: Box<Pattern>,
     },
 
     UnexpectedNullaryVariantPattern {
         label: String,
+        pat: Box<Pattern>,
     },
 
     DuplicateFunctionParameter {
@@ -207,6 +227,7 @@ pub enum TypeError {
 
     DuplicateLetBinding {
         name: String,
+        expr: Box<Expr>,
     },
 
     DuplicateTypeParameter {
@@ -224,13 +245,60 @@ pub enum TypeError {
     },
 }
 
+impl TypeError {
+    /// Returns the span of the primary expression associated with this error,
+    /// if any, so callers can compute a line/column for the error site.
+    pub fn primary_span(&self) -> Option<Span> {
+        match self {
+            TypeError::UnexpectedTypeForExpression { expr, .. } =>
+                expr.as_ref().map(|e| e.span),
+            TypeError::NotAFunction { expr, .. } => Some(expr.span),
+            TypeError::NotATuple { expr, .. } => Some(expr.span),
+            TypeError::NotARecord { expr, .. } => Some(expr.span),
+            TypeError::NotAList { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedLambda { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedTuple { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedRecord { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedVariant { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedList { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedInjection { expr, .. } => Some(expr.span),
+            TypeError::MissingRecordFields { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedRecordFields { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedFieldAccess { expr, .. } =>
+                expr.as_ref().map(|e| e.span),
+            TypeError::UnexpectedVariantLabel { expr, .. } =>
+                expr.as_ref().map(|e| e.span),
+            TypeError::TupleIndexOutOfBounds { expr, .. } => Some(expr.span),
+            TypeError::AmbiguousSumType { expr } => Some(expr.span),
+            TypeError::AmbiguousVariantType { expr } => Some(expr.span),
+            TypeError::AmbiguousList { expr } => Some(expr.span),
+            TypeError::AmbiguousTuple { expr } => Some(expr.span),
+            TypeError::AmbiguousFunction { expr } => Some(expr.span),
+            TypeError::IllegalEmptyMatching { expr } => Some(expr.span),
+            TypeError::NonexhaustiveMatchPatterns { expr, .. } => Some(expr.span),
+            TypeError::NonexhaustiveLetPatterns { expr, .. } => Some(expr.span),
+            TypeError::NonexhaustiveLetRecPatterns { expr, .. } => Some(expr.span),
+            TypeError::UndefinedVariable { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedTypeForParameter { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedTupleLength { expr, .. } => Some(expr.span),
+            TypeError::IncorrectNumberOfArguments { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedNumberOfParametersInLambda { expr, .. } => Some(expr.span),
+            TypeError::UnexpectedDataForNullaryLabel { expr, .. } => Some(expr.span),
+            TypeError::MissingDataForLabel { expr, .. } => Some(expr.span),
+            TypeError::DuplicateLetBinding { expr, .. } => Some(expr.span),
+            TypeError::DuplicateRecordFields { expr, .. } => Some(expr.span),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TypeError::MissingMain =>
                 write!(f, "ERROR_MISSING_MAIN:\n  no `main` function declared in the program"),
-            TypeError::UndefinedVariable(name) =>
-                write!(f, "ERROR_UNDEFINED_VARIABLE:\n  variable `{name}` is not defined"),
+            TypeError::UndefinedVariable { name, expr } =>
+                write!(f, "ERROR_UNDEFINED_VARIABLE:\n  variable `{name}` is not defined\n  for:\n    {expr}"),
             TypeError::UnexpectedTypeForExpression { expected, got, expr } => {
                 write!(f, "ERROR_UNEXPECTED_TYPE_FOR_EXPRESSION:\n  expected: {expected}\n  actual:   {got}")?;
                 if let Some(e) = expr {
@@ -248,8 +316,8 @@ impl fmt::Display for TypeError {
                 write!(f, "ERROR_NOT_A_LIST:\n  expected a list type, but got: {ty}\n  for:\n    {expr}"),
             TypeError::UnexpectedLambda { expected, expr } =>
                 write!(f, "ERROR_UNEXPECTED_LAMBDA:\n  checked against non-function type: {expected}\n  for:\n    {expr}"),
-            TypeError::UnexpectedTypeForParameter { param, expected, got } =>
-                write!(f, "ERROR_UNEXPECTED_TYPE_FOR_PARAMETER:\n  parameter: `{param}`\n  declared:  {got}\n  expected:  {expected}"),
+            TypeError::UnexpectedTypeForParameter { param, expected, got, expr } =>
+                write!(f, "ERROR_UNEXPECTED_TYPE_FOR_PARAMETER:\n  parameter: `{param}`\n  declared:  {got}\n  expected:  {expected}\n  for:\n    {expr}"),
             TypeError::UnexpectedTuple { expected, expr } =>
                 write!(f, "ERROR_UNEXPECTED_TUPLE:\n  tuple literal checked against non-tuple type: {expected}\n  for:\n    {expr}"),
             TypeError::UnexpectedRecord { expected, expr } =>
@@ -280,8 +348,8 @@ impl fmt::Display for TypeError {
             }
             TypeError::TupleIndexOutOfBounds { index, length, expr } =>
                 write!(f, "ERROR_TUPLE_INDEX_OUT_OF_BOUNDS:\n  index:  {index}\n  length: {length}\n  for:\n    {expr}"),
-            TypeError::UnexpectedTupleLength { expected, got } =>
-                write!(f, "ERROR_UNEXPECTED_TUPLE_LENGTH:\n  expected: {expected} element(s)\n  got:      {got} element(s)"),
+            TypeError::UnexpectedTupleLength { expected, got, expr } =>
+                write!(f, "ERROR_UNEXPECTED_TUPLE_LENGTH:\n  expected: {expected} element(s)\n  got:      {got} element(s)\n  for:\n    {expr}"),
             TypeError::AmbiguousSumType { expr } =>
                 write!(f, "ERROR_AMBIGUOUS_SUM_TYPE:\n  cannot determine sum type (type annotation required)\n  for:\n    {expr}"),
             TypeError::AmbiguousVariantType { expr } =>
@@ -292,10 +360,10 @@ impl fmt::Display for TypeError {
                 write!(f, "ERROR_ILLEGAL_EMPTY_MATCHING:\n  match expression must have at least one case\n  for:\n    {expr}"),
             TypeError::NonexhaustiveMatchPatterns { missing, expr } =>
                 write!(f, "ERROR_NONEXHAUSTIVE_MATCH_PATTERNS:\n  missing cases: {}\n  for:\n    {expr}", missing.join(", ")),
-            TypeError::UnexpectedPatternForType { pattern_desc, scrutinee_type } =>
-                write!(f, "ERROR_UNEXPECTED_PATTERN_FOR_TYPE:\n  pattern:        `{pattern_desc}`\n  scrutinee type: {scrutinee_type}"),
-            TypeError::DuplicateRecordFields { field } =>
-                write!(f, "ERROR_DUPLICATE_RECORD_FIELDS:\n  field `{field}` appears more than once in the record literal"),
+            TypeError::UnexpectedPatternForType { pattern_desc, scrutinee_type, pat } =>
+                write!(f, "ERROR_UNEXPECTED_PATTERN_FOR_TYPE:\n  pattern:        `{pattern_desc}`\n  scrutinee type: {scrutinee_type}\n  for:\n    {pat}"),
+            TypeError::DuplicateRecordFields { field, expr } =>
+                write!(f, "ERROR_DUPLICATE_RECORD_FIELDS:\n  field `{field}` appears more than once in the record literal\n  for:\n    {expr}"),
             TypeError::DuplicateRecordTypeFields { field } =>
                 write!(f, "ERROR_DUPLICATE_RECORD_TYPE_FIELDS:\n  field `{field}` appears more than once in the record type"),
             TypeError::DuplicateVariantTypeFields { label } =>
@@ -304,24 +372,24 @@ impl fmt::Display for TypeError {
                 write!(f, "ERROR_DUPLICATE_FUNCTION_DECLARATION:\n  function `{name}` is declared more than once"),
             TypeError::IncorrectArityOfMain { got } =>
                 write!(f, "ERROR_INCORRECT_ARITY_OF_MAIN:\n  `main` must have exactly 1 parameter, but has {got}"),
-            TypeError::IncorrectNumberOfArguments { expected, got } =>
-                write!(f, "ERROR_INCORRECT_NUMBER_OF_ARGUMENTS:\n  expected: {expected} argument(s)\n  got:      {got}"),
-            TypeError::UnexpectedNumberOfParametersInLambda { expected, got } =>
-                write!(f, "ERROR_UNEXPECTED_NUMBER_OF_PARAMETERS_IN_LAMBDA:\n  expected: {expected} parameter(s)\n  got:      {got}"),
-            TypeError::DuplicateRecordPatternFields { field } =>
-                write!(f, "ERROR_DUPLICATE_RECORD_PATTERN_FIELDS:\n  field `{field}` appears more than once in the record pattern"),
-            TypeError::UnexpectedDataForNullaryLabel { label } =>
-                write!(f, "ERROR_UNEXPECTED_DATA_FOR_NULLARY_LABEL:\n  label `{label}` is nullary (carries no data) but a payload was provided"),
-            TypeError::MissingDataForLabel { label } =>
-                write!(f, "ERROR_MISSING_DATA_FOR_LABEL:\n  label `{label}` requires a payload but none was provided"),
-            TypeError::UnexpectedNonNullaryVariantPattern { label } =>
-                write!(f, "ERROR_UNEXPECTED_NON_NULLARY_VARIANT_PATTERN:\n  pattern for label `{label}` has a data binding but the label is nullary"),
-            TypeError::UnexpectedNullaryVariantPattern { label } =>
-                write!(f, "ERROR_UNEXPECTED_NULLARY_VARIANT_PATTERN:\n  pattern for label `{label}` has no data binding but the label carries a payload"),
+            TypeError::IncorrectNumberOfArguments { expected, got, expr } =>
+                write!(f, "ERROR_INCORRECT_NUMBER_OF_ARGUMENTS:\n  expected: {expected} argument(s)\n  got:      {got}\n  for:\n    {expr}"),
+            TypeError::UnexpectedNumberOfParametersInLambda { expected, got, expr } =>
+                write!(f, "ERROR_UNEXPECTED_NUMBER_OF_PARAMETERS_IN_LAMBDA:\n  expected: {expected} parameter(s)\n  got:      {got}\n  for:\n    {expr}"),
+            TypeError::DuplicateRecordPatternFields { field, pat } =>
+                write!(f, "ERROR_DUPLICATE_RECORD_PATTERN_FIELDS:\n  field `{field}` appears more than once in the record pattern\n  for:\n    {pat}"),
+            TypeError::UnexpectedDataForNullaryLabel { label, expr } =>
+                write!(f, "ERROR_UNEXPECTED_DATA_FOR_NULLARY_LABEL:\n  label `{label}` is nullary (carries no data) but a payload was provided\n  for:\n    {expr}"),
+            TypeError::MissingDataForLabel { label, expr } =>
+                write!(f, "ERROR_MISSING_DATA_FOR_LABEL:\n  label `{label}` requires a payload but none was provided\n  for:\n    {expr}"),
+            TypeError::UnexpectedNonNullaryVariantPattern { label, pat } =>
+                write!(f, "ERROR_UNEXPECTED_NON_NULLARY_VARIANT_PATTERN:\n  pattern for label `{label}` has a data binding but the label is nullary\n  for:\n    {pat}"),
+            TypeError::UnexpectedNullaryVariantPattern { label, pat } =>
+                write!(f, "ERROR_UNEXPECTED_NULLARY_VARIANT_PATTERN:\n  pattern for label `{label}` has no data binding but the label carries a payload\n  for:\n    {pat}"),
             TypeError::DuplicateFunctionParameter { name } =>
                 write!(f, "ERROR_DUPLICATE_FUNCTION_PARAMETER:\n  parameter `{name}` appears more than once"),
-            TypeError::DuplicateLetBinding { name } =>
-                write!(f, "ERROR_DUPLICATE_LET_BINDING:\n  binding `{name}` appears more than once in the let-expression"),
+            TypeError::DuplicateLetBinding { name, expr } =>
+                write!(f, "ERROR_DUPLICATE_LET_BINDING:\n  binding `{name}` appears more than once in the let-expression\n  for:\n    {expr}"),
             TypeError::DuplicateTypeParameter { name } =>
                 write!(f, "ERROR_DUPLICATE_TYPE_PARAMETER:\n  type parameter `{name}` appears more than once"),
             TypeError::AmbiguousTuple { expr } =>
