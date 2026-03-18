@@ -669,6 +669,27 @@ fn test_error_nonexhaustive_match_list_missing_cons() {
 }
 
 #[test]
+fn test_error_exhaustive_match_list_patterns() {
+    let errors = typecheck(
+        "language core; fn main(n : [Nat]) -> Nat { return match n { [] => 0 | [a] => a | cons(a, cons(b, rest)) => b } }",
+    );
+    assert!(errors.is_empty(), "unexpected errors, got: {errors:?}");
+}
+#[test]
+fn test_error_nonexhaustive_match_list_patterns() {
+    let errors = typecheck(
+        "language core; fn main(n : [Nat]) -> Nat { return match n { [] => 0 | [a] => a | [a, b, rest] => b | cons(a, cons(b, cons(c, rest))) => c } }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
+        "expected NonexhaustiveMatchPatterns, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_nonexhaustive_match_catchall_covers_bool() {
     let errors = typecheck("language core; fn main(n : Bool) -> Nat { return match n { x => 0 } }");
     assert!(

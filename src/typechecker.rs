@@ -1068,6 +1068,16 @@ impl TypeChecker {
         let first_ty = &types[0];
         let rest = &types[1..];
 
+        if matrix.iter().all(|row| Self::is_catch_all(&row[0])) {
+            let reduced_matrix: Vec<Vec<Pattern>> =
+                matrix.iter().map(|row| row[1..].to_vec()).collect();
+            if Self::find_missing_witness_rev(&reduced_matrix, rest, reversed_witness) {
+                reversed_witness.push("_".to_string());
+                return true;
+            }
+            return false;
+        }
+
         match first_ty {
             Type::Bool => {
                 let checkpoint = reversed_witness.len();
