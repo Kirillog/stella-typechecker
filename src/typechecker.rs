@@ -430,13 +430,6 @@ impl TypeChecker {
             }
             ExprKind::Match { expr, cases } => {
                 let scrutinee_ty = self.infer(ctx, expr)?;
-                let mut case_types = Vec::new();
-                for match_case in cases {
-                    let mut local_ctx = ctx.clone();
-                    self.extend_ctx_by_pattern(&mut local_ctx, &match_case.pattern, &scrutinee_ty);
-                    let case_ty = self.infer(&local_ctx, &match_case.expr)?;
-                    case_types.push(case_ty);
-                }
                 if cases.is_empty() {
                     self.push_error(TypeError::IllegalEmptyMatching {
                         expr_span: expr.span,
@@ -445,6 +438,14 @@ impl TypeChecker {
                 }
                 let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
                 self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
+                let mut case_types = Vec::new();
+                for match_case in cases {
+                    let mut local_ctx = ctx.clone();
+                    self.extend_ctx_by_pattern(&mut local_ctx, &match_case.pattern, &scrutinee_ty);
+                    if let Some(case_ty) = self.infer(&local_ctx, &match_case.expr) {
+                        case_types.push(case_ty);
+                    }
+                }
                 if let Some(first_case_ty) = case_types.first() {
                     for case_ty in &case_types[1..] {
                         self.assert_types_equal(first_case_ty, case_ty);
@@ -632,13 +633,13 @@ impl TypeChecker {
                     }
                     if let Some(vt) = variants.iter().find(|v| v.name == *label) {
                         match (&vt.ty, payload) {
-                            (_, Some(_)) if *label == "none" => {
+                            (None, Some(_)) => {
                                 self.push_error(TypeError::UnexpectedDataForNullaryLabel {
                                     label: label.clone(),
                                     expr_span: expr.span,
                                 })
                             }
-                            (_, None) if *label == "some" => {
+                            (Some(_), None) => {
                                 self.push_error(TypeError::MissingDataForLabel {
                                     label: label.clone(),
                                     expr_span: expr.span,
@@ -646,9 +647,6 @@ impl TypeChecker {
                             }
                             (None, None) => {}
                             (Some(ty), Some(inner_expr)) => self.check(ctx, inner_expr, ty),
-                            _ => self.push_error(TypeError::AmbiguousVariantType {
-                                expr_span: expr.span,
-                            }),
                         }
                     } else {
                         self.push_error(TypeError::UnexpectedVariantLabel {
@@ -1592,8 +1590,16 @@ impl TypeChecker {
 
             PatternKind::Tuple(patterns) => match ty {
                 Type::Tuple(elem_types) => {
-                    for (p, t) in patterns.iter().zip(elem_types) {
-                        self.extend_ctx_by_pattern(ctx, p, t);
+                    if patterns.len() != elem_types.len() {
+                        self.push_error(TypeError::UnexpectedPatternForType {
+                            pattern_desc: "tuple".to_string(),
+                            scrutinee_type: ty.clone(),
+                            pat_span: pattern.span,
+                        });
+                    } else {
+                        for (p, t) in patterns.iter().zip(elem_types) {
+                            self.extend_ctx_by_pattern(ctx, p, t);
+                        }
                     }
                 }
                 _ => self.push_error(TypeError::UnexpectedPatternForType {

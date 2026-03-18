@@ -847,3 +847,357 @@ fn test_nonexhaustive_let_rec_patterns_missing_inr() {
         "expected NonexhaustiveLetRecPatterns, got: {errors:?}"
     );
 }
+
+#[test]
+fn test_error_unexpected_data_for_non_none_nullary_label() {
+    let errors = typecheck(
+        "language core; fn main(n : Nat) -> <| done |> { return <| done = 1 |> }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedDataForNullaryLabel { .. }
+        )),
+        "expected UnexpectedDataForNullaryLabel for label 'done', got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_missing_data_for_non_some_label() {
+    let errors = typecheck(
+        "language core; fn main(n : Nat) -> <| value : Nat |> { return <| value |> }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(e, TypeError::MissingDataForLabel { .. })),
+        "expected MissingDataForLabel for label 'value', got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_tuple_pattern_arity_mismatch_in_let() {
+    let errors = typecheck(
+        "language core; fn main(triple : {Nat, Nat, Nat}) -> Nat { return let {x, y} = triple in x }",
+    );
+    assert!(
+        !errors.is_empty(),
+        "expected a type error for arity-3 tuple matched by a 2-element pattern, but got none"
+    );
+}
+
+#[test]
+fn test_nonexhaustive_match_despite_ambiguous_first_case_body() {
+    let errors = typecheck(
+        "language core; fn main(b : Bool) -> Nat { return let x = match b { true => inl(0) } in 0 }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
+        "expected NonexhaustiveMatchPatterns for missing `false` branch, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_well_typed_mutual_recursion() {
+    let errors = typecheck(
+        "language core;
+         fn is_even(n : Nat) -> Bool {
+             return match n { 0 => true | succ(k) => is_odd(k) }
+         }
+         fn is_odd(n : Nat) -> Bool {
+             return match n { 0 => false | succ(k) => is_even(k) }
+         }
+         fn main(n : Nat) -> Bool { return is_even(n) }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_well_typed_natrec_sum() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat {
+             return Nat::rec(n, 0, fn(k : Nat) { return fn(acc : Nat) { return succ(acc) } })
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_well_typed_fix_factorial() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat {
+             return fix(fn(self : fn(Nat) -> Nat) {
+                 return fn(k : Nat) {
+                     return match k { 0 => 1 | succ(m) => self(m) }
+                 }
+             })(n)
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_well_typed_nested_sum_match_exhaustive() {
+    let errors = typecheck(
+        "language core;
+         fn main(s : Nat + (Bool + Nat)) -> Nat {
+             return match s {
+                 inl(n)       => n
+               | inr(inl(b))  => 0
+               | inr(inr(m))  => m
+             }
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_error_nonexhaustive_nested_sum_missing_inr_inr() {
+    let errors = typecheck(
+        "language core;
+         fn main(s : Nat + (Bool + Nat)) -> Nat {
+             return match s {
+                 inl(n)      => n
+               | inr(inl(b)) => 0
+             }
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
+        "expected NonexhaustiveMatchPatterns for missing inr(inr(_)), got: {errors:?}"
+    );
+    let missing = missing_witnesses(&errors).expect("expected missing witness");
+    assert_eq!(missing, ["inr(inr(_))"], "wrong witness: {missing:?}");
+}
+
+#[test]
+fn test_error_nonexhaustive_variant_match_three_labels() {
+    let errors = typecheck(
+        "language core;
+         fn main(v : <| a : Nat, b : Bool, c : Nat |>) -> Nat {
+             return match v {
+                 <| a = x |> => x
+               | <| b = flag |> => 0
+             }
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
+        "expected NonexhaustiveMatchPatterns for missing <| c |>, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_natrec_wrong_step_type() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat {
+             return Nat::rec(n, 0, fn(k : Nat) { return 0 })
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTypeForExpression { .. }
+                | TypeError::UnexpectedLambda { .. }
+                | TypeError::UnexpectedTypeForParameter { .. }
+        )),
+        "expected type error for step fn with wrong type, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_fix_param_return_type_mismatch() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat { return fix(fn(x : Nat) { return true }) }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTypeForExpression { .. }
+        )),
+        "expected UnexpectedTypeForExpression for fix with mismatched param/return types, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_fix_wrong_arity() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat { return fix(fn(f : Nat, g : Bool) { return 0 })(n) }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::IncorrectNumberOfArguments { .. }
+        )),
+        "expected IncorrectNumberOfArguments for fix applied to 2-param function, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_well_typed_type_ascription() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat { return (succ(n) as Nat) }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_error_type_ascription_wrong_type() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Bool { return (succ(n) as Bool) }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTypeForExpression { .. }
+        )),
+        "expected UnexpectedTypeForExpression for wrong type ascription, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_match_case_type_mismatch() {
+    let errors = typecheck(
+        "language core;
+         fn main(b : Bool) -> Nat {
+             return let result = match b { true => 1 | false => true } in result
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTypeForExpression { .. }
+        )),
+        "expected UnexpectedTypeForExpression for mismatched case types, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_higher_order_wrong_return_type() {
+    let errors = typecheck(
+        "language core;
+         fn apply(f : fn(Nat) -> Bool, x : Nat) -> Bool { return f(x) }
+         fn bad(n : Nat) -> Nat { return n }
+         fn main(n : Nat) -> Bool { return apply(bad, n) }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTypeForExpression { .. }
+        )),
+        "expected UnexpectedTypeForExpression for higher-order function mismatch, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_well_typed_nested_let_shadowing() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Bool {
+             return let x = n in
+                    let x = (n == 0) in
+                    x
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_well_typed_nat_match_specific_ints_and_catch_all_succ() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat {
+             return match n {
+                 0 => 0
+               | 1 => 1
+               | 2 => 2
+               | succ(succ(succ(k))) => k
+             }
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_error_nonexhaustive_nat_match_specific_ints_only() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> Nat {
+             return match n { 0 => 0 | 1 => 1 | 2 => 2 }
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
+        "expected NonexhaustiveMatchPatterns for uncovered succ(succ(succ(_))), got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_nonexhaustive_nested_variant_in_sum() {
+    let errors = typecheck(
+        "language core;
+         fn main(s : <| a : Bool, b : Nat |> + Nat) -> Nat {
+             return match s {
+                 inl(<| a = flag |>) => 0
+               | inr(n)             => n
+             }
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::NonexhaustiveMatchPatterns { .. }
+        )),
+        "expected NonexhaustiveMatchPatterns for missing inl(<| b = _ |>), got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_well_typed_exhaustive_nested_variant_in_sum() {
+    let errors = typecheck(
+        "language core;
+         fn main(s : <| a : Bool, b : Nat |> + Nat) -> Nat {
+             return match s {
+                 inl(<| a = flag |>) => 0
+               | inl(<| b = n |>)   => n
+               | inr(m)             => m
+             }
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_error_cons_tail_wrong_type() {
+    let errors = typecheck(
+        "language core;
+         fn main(n : Nat) -> [Nat] {
+             return cons(n, [true, false])
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTypeForExpression { .. }
+                | TypeError::UnexpectedList { .. }
+        )),
+        "expected type error for cons with Bool tail on Nat list, got: {errors:?}"
+    );
+}
