@@ -128,7 +128,10 @@ fn test_equal() {
 
 #[test]
 fn test_not_equal() {
-    assert!(matches!(parse_expr("a != b").node, ExprKind::NotEqual(_, _)));
+    assert!(matches!(
+        parse_expr("a != b").node,
+        ExprKind::NotEqual(_, _)
+    ));
 }
 
 #[test]
@@ -138,7 +141,10 @@ fn test_logic_or() {
 
 #[test]
 fn test_logic_and() {
-    assert!(matches!(parse_expr("a and b").node, ExprKind::LogicAnd(_, _)));
+    assert!(matches!(
+        parse_expr("a and b").node,
+        ExprKind::LogicAnd(_, _)
+    ));
 }
 
 #[test]
@@ -259,22 +265,34 @@ fn test_list_literals() {
 
 #[test]
 fn test_cons() {
-    assert!(matches!(parse_expr("cons(1, [])").node, ExprKind::ConsList(_, _)));
+    assert!(matches!(
+        parse_expr("cons(1, [])").node,
+        ExprKind::ConsList(_, _)
+    ));
 }
 
 #[test]
 fn test_list_head() {
-    assert!(matches!(parse_expr("List::head(xs)").node, ExprKind::Head(_)));
+    assert!(matches!(
+        parse_expr("List::head(xs)").node,
+        ExprKind::Head(_)
+    ));
 }
 
 #[test]
 fn test_list_tail() {
-    assert!(matches!(parse_expr("List::tail(xs)").node, ExprKind::Tail(_)));
+    assert!(matches!(
+        parse_expr("List::tail(xs)").node,
+        ExprKind::Tail(_)
+    ));
 }
 
 #[test]
 fn test_list_isempty() {
-    assert!(matches!(parse_expr("List::isempty(xs)").node, ExprKind::IsEmpty(_)));
+    assert!(matches!(
+        parse_expr("List::isempty(xs)").node,
+        ExprKind::IsEmpty(_)
+    ));
 }
 
 #[test]
@@ -289,7 +307,10 @@ fn test_nat_pred() {
 
 #[test]
 fn test_nat_iszero() {
-    assert!(matches!(parse_expr("Nat::iszero(n)").node, ExprKind::IsZero(_)));
+    assert!(matches!(
+        parse_expr("Nat::iszero(n)").node,
+        ExprKind::IsZero(_)
+    ));
 }
 
 #[test]
@@ -347,7 +368,10 @@ fn test_sequence() {
 
 #[test]
 fn test_type_asc() {
-    assert!(matches!(parse_expr("x as Nat").node, ExprKind::TypeAsc(_, _)));
+    assert!(matches!(
+        parse_expr("x as Nat").node,
+        ExprKind::TypeAsc(_, _)
+    ));
 }
 
 #[test]
@@ -357,7 +381,10 @@ fn test_fix() {
 
 #[test]
 fn test_fold() {
-    assert!(matches!(parse_expr("fold[µ X . Nat] x").node, ExprKind::Fold { .. }));
+    assert!(matches!(
+        parse_expr("fold[µ X . Nat] x").node,
+        ExprKind::Fold { .. }
+    ));
 }
 
 #[test]

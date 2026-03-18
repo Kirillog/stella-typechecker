@@ -8,32 +8,6 @@ impl Span {
     pub fn new(start: usize, end: usize) -> Self {
         Span { start, end }
     }
-
-    pub fn start_line_col(&self, src: &str) -> (u32, u32) {
-        offset_to_line_col(src, self.start)
-    }
-
-    pub fn end_line_col(&self, src: &str) -> (u32, u32) {
-        offset_to_line_col(src, self.end)
-    }
-}
-
-fn offset_to_line_col(src: &str, offset: usize) -> (u32, u32) {
-    let offset = offset.min(src.len());
-    let mut line: u32 = 1;
-    let mut col: u32 = 1;
-    for (i, ch) in src.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += ch.len_utf8() as u32;
-        }
-    }
-    (line, col)
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +18,10 @@ pub struct Spanned<T> {
 
 impl<T> Spanned<T> {
     pub fn new(node: T, start: usize, end: usize) -> Self {
-        Spanned { node, span: Span::new(start, end) }
+        Spanned {
+            node,
+            span: Span::new(start, end),
+        }
     }
 }
 
@@ -286,11 +263,10 @@ pub enum ExprKind {
     Var(String),
 }
 
-/// An expression together with its source span.
 pub type Expr = Spanned<ExprKind>;
 
 #[derive(Debug, Clone)]
-pub enum Pattern {
+pub enum PatternKind {
     /// `p cast as T`
     CastAs(Box<Pattern>, Box<Type>),
     /// `p as T`
@@ -321,6 +297,8 @@ pub enum Pattern {
     /// An identifier (variable binding)
     Var(String),
 }
+
+pub type Pattern = Spanned<PatternKind>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -687,19 +665,19 @@ impl fmt::Display for Expr {
     }
 }
 
-impl fmt::Display for Pattern {
+impl fmt::Display for PatternKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Pattern::Var(name) => write!(f, "{}", name),
-            Pattern::True => write!(f, "true"),
-            Pattern::False => write!(f, "false"),
-            Pattern::Unit => write!(f, "unit"),
-            Pattern::Int(n) => write!(f, "{}", n),
-            Pattern::Inl(p) => write!(f, "inl({})", p),
-            Pattern::Inr(p) => write!(f, "inr({})", p),
-            Pattern::Succ(p) => write!(f, "succ({})", p),
-            Pattern::Cons(h, t) => write!(f, "cons({}, {})", h, t),
-            Pattern::Tuple(pats) => {
+            PatternKind::Var(name) => write!(f, "{}", name),
+            PatternKind::True => write!(f, "true"),
+            PatternKind::False => write!(f, "false"),
+            PatternKind::Unit => write!(f, "unit"),
+            PatternKind::Int(n) => write!(f, "{}", n),
+            PatternKind::Inl(p) => write!(f, "inl({})", p),
+            PatternKind::Inr(p) => write!(f, "inr({})", p),
+            PatternKind::Succ(p) => write!(f, "succ({})", p),
+            PatternKind::Cons(h, t) => write!(f, "cons({}, {})", h, t),
+            PatternKind::Tuple(pats) => {
                 write!(f, "{{")?;
                 for (i, p) in pats.iter().enumerate() {
                     if i > 0 {
@@ -709,7 +687,7 @@ impl fmt::Display for Pattern {
                 }
                 write!(f, "}}")
             }
-            Pattern::Record(fields) => {
+            PatternKind::Record(fields) => {
                 write!(f, "{{")?;
                 for (i, lp) in fields.iter().enumerate() {
                     if i > 0 {
@@ -719,7 +697,7 @@ impl fmt::Display for Pattern {
                 }
                 write!(f, "}}")
             }
-            Pattern::List(pats) => {
+            PatternKind::List(pats) => {
                 write!(f, "[")?;
                 for (i, p) in pats.iter().enumerate() {
                     if i > 0 {
@@ -729,13 +707,19 @@ impl fmt::Display for Pattern {
                 }
                 write!(f, "]")
             }
-            Pattern::Variant {
+            PatternKind::Variant {
                 label,
                 data: Some(p),
             } => write!(f, "<| {} = {} |>", label, p),
-            Pattern::Variant { label, data: None } => write!(f, "<| {} |>", label),
-            Pattern::Asc(p, ty) => write!(f, "{} as {}", p, ty),
-            Pattern::CastAs(p, ty) => write!(f, "{} cast as {}", p, ty),
+            PatternKind::Variant { label, data: None } => write!(f, "<| {} |>", label),
+            PatternKind::Asc(p, ty) => write!(f, "{} as {}", p, ty),
+            PatternKind::CastAs(p, ty) => write!(f, "{} cast as {}", p, ty),
         }
+    }
+}
+
+impl fmt::Display for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.node, f)
     }
 }

@@ -33,8 +33,27 @@ fn test_error_missing_main() {
 fn test_error_undefined_variable() {
     let errors = typecheck("language core; fn main(n : Nat) -> Nat { return x }");
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::UndefinedVariable { .. })),
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UndefinedVariable { .. }
+        )),
         "expected UndefinedVariable, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_error_display_shows_source_excerpt() {
+    let errors = typecheck("language core; fn main(n : Nat) -> Nat { return x }");
+    let rendered = errors
+        .iter()
+        .find(|e| matches!(e.error, TypeError::UndefinedVariable { .. }))
+        .expect("expected UndefinedVariable")
+        .to_string();
+
+    assert!(
+        rendered
+            .contains("\n  --> [1:49]\n  1 | language core; fn main(n : Nat) -> Nat { return x }"),
+        "expected source line context header in rendered error, got: {rendered}"
     );
 }
 

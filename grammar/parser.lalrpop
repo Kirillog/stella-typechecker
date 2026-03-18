@@ -193,32 +193,37 @@ Type3: Type = {
 };
 
 pub Pattern: Pattern = {
-    <p:Pattern> "cast" "as" <t:Type>
-        => Pattern::CastAs(Box::new(p), Box::new(t)),
-    <p:Pattern> "as" <t:Type>
-        => Pattern::Asc(Box::new(p), Box::new(t)),
+    <l:@L> <p:Pattern> "cast" "as" <t:Type> <r:@R>
+        => Spanned::new(PatternKind::CastAs(Box::new(p), Box::new(t)), l, r),
+    <l:@L> <p:Pattern> "as" <t:Type> <r:@R>
+        => Spanned::new(PatternKind::Asc(Box::new(p), Box::new(t)), l, r),
     PatternAtom,
 };
 
 PatternAtom: Pattern = {
-    "<|" <label:StellaIdent> <data:PatternData> "|>"
-        => Pattern::Variant { label, data: data.map(Box::new) },
-    "inl" "(" <p:Pattern> ")"  => Pattern::Inl(Box::new(p)),
-    "inr" "(" <p:Pattern> ")"  => Pattern::Inr(Box::new(p)),
-    "{" <ps:Comma<Pattern>> "}"
-        => Pattern::Tuple(ps),
-    "{" <lps:Comma1<LabelledPattern>> "}"
-        => Pattern::Record(lps),
-    "[" <ps:Comma<Pattern>> "]"
-        => Pattern::List(ps),
-    "cons" "(" <h:Pattern> "," <t:Pattern> ")"
-        => Pattern::Cons(Box::new(h), Box::new(t)),
-    "false"                    => Pattern::False,
-    "true"                     => Pattern::True,
-    "unit"                     => Pattern::Unit,
-    <n:IntLit>                 => Pattern::Int(usize::from_str(n).unwrap()),
-    "succ" "(" <p:Pattern> ")" => Pattern::Succ(Box::new(p)),
-    <name:StellaIdent>         => Pattern::Var(name),
+    <l:@L> "<|" <label:StellaIdent> <data:PatternData> "|>" <r:@R>
+        => Spanned::new(PatternKind::Variant { label, data: data.map(Box::new) }, l, r),
+    <l:@L> "inl" "(" <p:Pattern> ")" <r:@R>
+        => Spanned::new(PatternKind::Inl(Box::new(p)), l, r),
+    <l:@L> "inr" "(" <p:Pattern> ")" <r:@R>
+        => Spanned::new(PatternKind::Inr(Box::new(p)), l, r),
+    <l:@L> "{" <ps:Comma<Pattern>> "}" <r:@R>
+        => Spanned::new(PatternKind::Tuple(ps), l, r),
+    <l:@L> "{" <lps:Comma1<LabelledPattern>> "}" <r:@R>
+        => Spanned::new(PatternKind::Record(lps), l, r),
+    <l:@L> "[" <ps:Comma<Pattern>> "]" <r:@R>
+        => Spanned::new(PatternKind::List(ps), l, r),
+    <l:@L> "cons" "(" <h:Pattern> "," <t:Pattern> ")" <r:@R>
+        => Spanned::new(PatternKind::Cons(Box::new(h), Box::new(t)), l, r),
+    <l:@L> "false" <r:@R>                    => Spanned::new(PatternKind::False, l, r),
+    <l:@L> "true" <r:@R>                     => Spanned::new(PatternKind::True, l, r),
+    <l:@L> "unit" <r:@R>                     => Spanned::new(PatternKind::Unit, l, r),
+    <l:@L> <n:IntLit> <r:@R>
+        => Spanned::new(PatternKind::Int(usize::from_str(n).unwrap()), l, r),
+    <l:@L> "succ" "(" <p:Pattern> ")" <r:@R>
+        => Spanned::new(PatternKind::Succ(Box::new(p)), l, r),
+    <l:@L> <name:StellaIdent> <r:@R>
+        => Spanned::new(PatternKind::Var(name), l, r),
     "(" <p:Pattern> ")"        => p,
 };
 

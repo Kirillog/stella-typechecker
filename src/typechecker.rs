@@ -1,6 +1,6 @@
 use crate::ast::{
-    Decl, DeclFun, DeclFunGeneric, Expr, ExprKind, ParamDecl, Pattern, Program, RecordFieldType,
-    ReturnType, Type, VariantFieldType,
+    Decl, DeclFun, DeclFunGeneric, Expr, ExprKind, ParamDecl, Pattern, PatternKind, Program,
+    RecordFieldType, ReturnType, Spanned, Type, VariantFieldType,
 };
 use crate::type_error::{TypeCheckError, TypeError};
 use std::collections::{HashMap, HashSet};
@@ -54,7 +54,7 @@ impl TypeChecker {
             self.push_error(TypeError::UnexpectedTypeForExpression {
                 expected: expected.clone(),
                 got: got.clone(),
-                expr: None,
+                expr_span: None,
             });
         }
     }
@@ -64,7 +64,7 @@ impl TypeChecker {
             self.push_error(TypeError::UnexpectedTypeForExpression {
                 expected: expected.clone(),
                 got: got.clone(),
-                expr: Some(Box::new(expr.clone())),
+                expr_span: Some(expr.span),
             });
         }
     }
@@ -78,7 +78,7 @@ impl TypeChecker {
             ExprKind::Var(_name) => ctx.lookup(_name).cloned().or_else(|| {
                 self.push_error(TypeError::UndefinedVariable {
                     name: _name.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 });
                 None
             }),
@@ -108,7 +108,7 @@ impl TypeChecker {
                         if !seen_names.insert(name.clone()) {
                             self.push_error(TypeError::DuplicateLetBinding {
                                 name,
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                         }
                     }
@@ -127,7 +127,7 @@ impl TypeChecker {
                         if !seen_names.insert(name.clone()) {
                             self.push_error(TypeError::DuplicateLetBinding {
                                 name,
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                         }
                     }
@@ -166,7 +166,7 @@ impl TypeChecker {
                                 param: p.name.clone(),
                                 expected: Type::Auto,
                                 got: Type::Auto,
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                             None
                         } else {
@@ -191,14 +191,14 @@ impl TypeChecker {
                         self.push_error(TypeError::IncorrectNumberOfArguments {
                             expected: param_types.len(),
                             got: args.len(),
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                         None
                     }
                     _ => {
                         self.push_error(TypeError::NotAFunction {
                             ty: func_ty,
-                            expr: func.clone(),
+                            expr_span: func.span,
                         });
                         None
                     }
@@ -269,7 +269,7 @@ impl TypeChecker {
                         self.push_error(TypeError::IncorrectNumberOfArguments {
                             expected: 1,
                             got: param_types.len(),
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                         None
                     }
@@ -277,7 +277,7 @@ impl TypeChecker {
                         self.push_error(TypeError::UnexpectedTypeForExpression {
                             expected: Type::Fun(vec![Type::Auto], Box::new(Type::Auto)),
                             got: f_ty,
-                            expr: None,
+                            expr_span: None,
                         });
                         None
                     }
@@ -302,14 +302,14 @@ impl TypeChecker {
                         self.push_error(TypeError::TupleIndexOutOfBounds {
                             index: *index,
                             length: elem_types.len(),
-                            expr: e.clone(),
+                            expr_span: e.span,
                         });
                         None
                     }
                     _ => {
                         self.push_error(TypeError::NotATuple {
                             ty: tuple_ty,
-                            expr: e.clone(),
+                            expr_span: e.span,
                         });
                         None
                     }
@@ -323,7 +323,7 @@ impl TypeChecker {
                     if seen.insert(binding.name.clone(), ()).is_some() {
                         self.push_error(TypeError::DuplicateRecordFields {
                             field: binding.name.clone(),
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                     }
                     let ty = self.infer(ctx, &binding.expr)?;
@@ -343,7 +343,7 @@ impl TypeChecker {
                         self.push_error(TypeError::UnexpectedFieldAccess {
                             field: field.clone(),
                             record_type: Type::Record(field_types),
-                            expr: Some(expr.clone()),
+                            expr_span: Some(expr.span),
                         });
                         None
                     }
@@ -351,7 +351,7 @@ impl TypeChecker {
                 Some(record_ty) => {
                     self.push_error(TypeError::NotARecord {
                         ty: record_ty,
-                        expr: expr.clone(),
+                        expr_span: expr.span,
                     });
                     None
                 }
@@ -360,14 +360,14 @@ impl TypeChecker {
 
             ExprKind::Inl(_) | ExprKind::Inr(_) => {
                 self.push_error(TypeError::AmbiguousSumType {
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 });
                 None
             }
 
             ExprKind::Variant { .. } => {
                 self.push_error(TypeError::AmbiguousVariantType {
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 });
                 None
             }
@@ -375,7 +375,7 @@ impl TypeChecker {
             ExprKind::List(exprs) => {
                 if exprs.is_empty() {
                     self.push_error(TypeError::AmbiguousList {
-                        expr: Box::new(expr.clone()),
+                        expr_span: expr.span,
                     });
                     None
                 } else {
@@ -396,7 +396,7 @@ impl TypeChecker {
                     a => {
                         self.push_error(TypeError::NotAList {
                             ty: a,
-                            expr: e.clone(),
+                            expr_span: e.span,
                         });
                         None
                     }
@@ -409,7 +409,7 @@ impl TypeChecker {
                     a => {
                         self.push_error(TypeError::NotAList {
                             ty: a,
-                            expr: e.clone(),
+                            expr_span: e.span,
                         });
                         None
                     }
@@ -422,7 +422,7 @@ impl TypeChecker {
                     a => {
                         self.push_error(TypeError::NotAList {
                             ty: a,
-                            expr: e.clone(),
+                            expr_span: e.span,
                         });
                         None
                     }
@@ -438,7 +438,9 @@ impl TypeChecker {
                     case_types.push(case_ty);
                 }
                 if cases.is_empty() {
-                    self.push_error(TypeError::IllegalEmptyMatching { expr: expr.clone() });
+                    self.push_error(TypeError::IllegalEmptyMatching {
+                        expr_span: expr.span,
+                    });
                     return None;
                 }
                 let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
@@ -470,7 +472,7 @@ impl TypeChecker {
                         self.push_error(TypeError::UnexpectedNumberOfParametersInLambda {
                             expected: param_types.len(),
                             got: params.len(),
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                     }
                     let mut local_ctx = ctx.clone();
@@ -486,7 +488,7 @@ impl TypeChecker {
                                 param: p.name.clone(),
                                 expected: expected_param_ty.clone(),
                                 got: p.ty.clone(),
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                         }
                         local_ctx.extend(p.name.clone(), expected_param_ty.clone());
@@ -495,7 +497,7 @@ impl TypeChecker {
                 }
                 _ => self.push_error(TypeError::UnexpectedLambda {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
 
@@ -505,7 +507,7 @@ impl TypeChecker {
                         self.push_error(TypeError::IncorrectNumberOfArguments {
                             expected: param_types.len(),
                             got: args.len(),
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                     } else {
                         for (arg, param_ty) in args.iter().zip(param_types) {
@@ -516,9 +518,11 @@ impl TypeChecker {
                 }
                 Some(func_ty) => self.push_error(TypeError::NotAFunction {
                     ty: func_ty,
-                    expr: func.clone(),
+                    expr_span: func.span,
                 }),
-                None => self.push_error(TypeError::AmbiguousFunction { expr: func.clone() }),
+                None => self.push_error(TypeError::AmbiguousFunction {
+                    expr_span: func.span,
+                }),
             },
 
             ExprKind::Tuple(exprs) => match expected {
@@ -527,7 +531,7 @@ impl TypeChecker {
                         self.push_error(TypeError::UnexpectedTupleLength {
                             expected: elem_types.len(),
                             got: exprs.len(),
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                     }
                     for (e, ty) in exprs.iter().zip(elem_types) {
@@ -536,7 +540,7 @@ impl TypeChecker {
                 }
                 _ => self.push_error(TypeError::UnexpectedTuple {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
 
@@ -548,15 +552,15 @@ impl TypeChecker {
                         self.push_error(TypeError::TupleIndexOutOfBounds {
                             index: *index,
                             length: elem_types.len(),
-                            expr: e.clone(),
+                            expr_span: e.span,
                         });
                     }
                 }
                 Some(tuple_ty) => self.push_error(TypeError::NotATuple {
                     ty: tuple_ty,
-                    expr: e.clone(),
+                    expr_span: e.span,
                 }),
-                None => self.push_error(TypeError::AmbiguousTuple { expr: e.clone() }),
+                None => self.push_error(TypeError::AmbiguousTuple { expr_span: e.span }),
             },
 
             ExprKind::Record(bindings) => match expected {
@@ -566,7 +570,7 @@ impl TypeChecker {
                         if seen.insert(b.name.clone(), ()).is_some() {
                             self.push_error(TypeError::DuplicateRecordFields {
                                 field: b.name.clone(),
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                         }
                     }
@@ -590,7 +594,7 @@ impl TypeChecker {
                     if !missing.is_empty() {
                         self.push_error(TypeError::MissingRecordFields {
                             missing,
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                     }
                     let unexpected: Vec<String> = binding_names
@@ -601,7 +605,7 @@ impl TypeChecker {
                     if !unexpected.is_empty() {
                         self.push_error(TypeError::UnexpectedRecordFields {
                             unexpected,
-                            expr: Box::new(expr.clone()),
+                            expr_span: expr.span,
                         });
                     }
                     for binding in bindings {
@@ -612,7 +616,7 @@ impl TypeChecker {
                 }
                 _ => self.push_error(TypeError::UnexpectedRecord {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
 
@@ -631,32 +635,32 @@ impl TypeChecker {
                             (_, Some(_)) if *label == "none" => {
                                 self.push_error(TypeError::UnexpectedDataForNullaryLabel {
                                     label: label.clone(),
-                                    expr: Box::new(expr.clone()),
+                                    expr_span: expr.span,
                                 })
                             }
                             (_, None) if *label == "some" => {
                                 self.push_error(TypeError::MissingDataForLabel {
                                     label: label.clone(),
-                                    expr: Box::new(expr.clone()),
+                                    expr_span: expr.span,
                                 })
                             }
                             (None, None) => {}
-                            (Some(ty), Some(expr)) => self.check(ctx, expr, ty),
+                            (Some(ty), Some(inner_expr)) => self.check(ctx, inner_expr, ty),
                             _ => self.push_error(TypeError::AmbiguousVariantType {
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             }),
                         }
                     } else {
                         self.push_error(TypeError::UnexpectedVariantLabel {
                             label: label.clone(),
                             variant_type: expected.clone(),
-                            expr: Some(Box::new(expr.clone())),
+                            expr_span: Some(expr.span),
                         });
                     }
                 }
                 _ => self.push_error(TypeError::UnexpectedVariant {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
 
@@ -664,14 +668,14 @@ impl TypeChecker {
                 Type::Sum(left, _) => self.check(ctx, inner, left),
                 _ => self.push_error(TypeError::UnexpectedInjection {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
             ExprKind::Inr(inner) => match expected {
                 Type::Sum(_, right) => self.check(ctx, inner, right),
                 _ => self.push_error(TypeError::UnexpectedInjection {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
 
@@ -683,7 +687,7 @@ impl TypeChecker {
                 }
                 _ => self.push_error(TypeError::UnexpectedList {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
             ExprKind::ConsList(head, tail) => match expected {
@@ -693,7 +697,7 @@ impl TypeChecker {
                 }
                 _ => self.push_error(TypeError::UnexpectedList {
                     expected: expected.clone(),
-                    expr: Box::new(expr.clone()),
+                    expr_span: expr.span,
                 }),
             },
             ExprKind::IsEmpty(e) => {
@@ -702,15 +706,17 @@ impl TypeChecker {
                     Some(Type::List(_)) => {}
                     Some(a) => self.push_error(TypeError::NotAList {
                         ty: a,
-                        expr: e.clone(),
+                        expr_span: e.span,
                     }),
-                    None => self.push_error(TypeError::AmbiguousList { expr: e.clone() }),
+                    None => self.push_error(TypeError::AmbiguousList { expr_span: e.span }),
                 }
             }
             ExprKind::Match { expr, cases } => {
                 if let Some(scrutinee_ty) = self.infer(ctx, expr) {
                     if cases.is_empty() {
-                        self.push_error(TypeError::IllegalEmptyMatching { expr: expr.clone() });
+                        self.push_error(TypeError::IllegalEmptyMatching {
+                            expr_span: expr.span,
+                        });
                     } else {
                         let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
                         self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
@@ -734,7 +740,7 @@ impl TypeChecker {
                         if !seen_names.insert(name.clone()) {
                             self.push_error(TypeError::DuplicateLetBinding {
                                 name,
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                         }
                     }
@@ -753,7 +759,7 @@ impl TypeChecker {
                         if !seen_names.insert(name.clone()) {
                             self.push_error(TypeError::DuplicateLetBinding {
                                 name,
-                                expr: Box::new(expr.clone()),
+                                expr_span: expr.span,
                             });
                         }
                     }
@@ -914,31 +920,31 @@ impl TypeChecker {
     }
 
     fn extract_declared_type(pattern: &Pattern) -> Option<Type> {
-        match pattern {
-            Pattern::Asc(_, ty) | Pattern::CastAs(_, ty) => Some(*ty.clone()),
-            Pattern::Variant { label, data } => {
+        match &pattern.node {
+            PatternKind::Asc(_, ty) | PatternKind::CastAs(_, ty) => Some(*ty.clone()),
+            PatternKind::Variant { label, data } => {
                 let field = VariantFieldType {
                     name: label.clone(),
                     ty: data.as_deref().and_then(Self::extract_declared_type),
                 };
                 Some(Type::Variant(vec![field]))
             }
-            Pattern::Inl(inner) => {
+            PatternKind::Inl(inner) => {
                 let _ = Self::extract_declared_type(inner)?;
                 None
             }
-            Pattern::Inr(inner) => {
+            PatternKind::Inr(inner) => {
                 let _ = Self::extract_declared_type(inner)?;
                 None
             }
-            Pattern::Tuple(pats) => {
+            PatternKind::Tuple(pats) => {
                 let types = pats
                     .iter()
                     .map(Self::extract_declared_type)
                     .collect::<Option<Vec<_>>>()?;
                 Some(Type::Tuple(types))
             }
-            Pattern::Record(fields) => {
+            PatternKind::Record(fields) => {
                 let types = fields
                     .iter()
                     .map(|f| {
@@ -950,7 +956,7 @@ impl TypeChecker {
                     .collect::<Option<Vec<_>>>()?;
                 Some(Type::Record(types))
             }
-            Pattern::List(pats) => {
+            PatternKind::List(pats) => {
                 let mut tys = pats
                     .iter()
                     .map(Self::extract_declared_type)
@@ -962,7 +968,7 @@ impl TypeChecker {
                     None
                 }
             }
-            Pattern::Cons(head, tail) => {
+            PatternKind::Cons(head, tail) => {
                 let head_ty = Self::extract_declared_type(head)?;
                 match Self::extract_declared_type(tail)? {
                     Type::List(elem_ty) if *elem_ty == head_ty => {
@@ -971,24 +977,24 @@ impl TypeChecker {
                     _ => None,
                 }
             }
-            Pattern::False | Pattern::True => Some(Type::Bool),
-            Pattern::Unit => Some(Type::Unit),
-            Pattern::Int(_) | Pattern::Succ(_) => Some(Type::Nat),
+            PatternKind::False | PatternKind::True => Some(Type::Bool),
+            PatternKind::Unit => Some(Type::Unit),
+            PatternKind::Int(_) | PatternKind::Succ(_) => Some(Type::Nat),
             _ => None,
         }
     }
 
     fn is_catch_all(pattern: &Pattern) -> bool {
-        match pattern {
-            Pattern::Var(_) => true,
-            Pattern::Asc(inner, _) | Pattern::CastAs(inner, _) => Self::is_catch_all(inner),
+        match &pattern.node {
+            PatternKind::Var(_) => true,
+            PatternKind::Asc(inner, _) | PatternKind::CastAs(inner, _) => Self::is_catch_all(inner),
             _ => false,
         }
     }
 
     fn strip_asc(pattern: &Pattern) -> &Pattern {
-        match pattern {
-            Pattern::Asc(inner, _) | Pattern::CastAs(inner, _) => Self::strip_asc(inner),
+        match &pattern.node {
+            PatternKind::Asc(inner, _) | PatternKind::CastAs(inner, _) => Self::strip_asc(inner),
             _ => pattern,
         }
     }
@@ -1003,7 +1009,7 @@ impl TypeChecker {
         if let Some(witness) = Self::find_missing_witness(&matrix, &[scrutinee_ty.clone()]) {
             self.push_error(TypeError::NonexhaustiveMatchPatterns {
                 missing: witness,
-                expr: Box::new(scrutinee.clone()),
+                expr_span: scrutinee.span,
             });
         }
     }
@@ -1013,7 +1019,7 @@ impl TypeChecker {
         if let Some(witness) = Self::find_missing_witness(&matrix, &[expr_ty.clone()]) {
             self.push_error(TypeError::NonexhaustiveLetPatterns {
                 missing: witness,
-                expr: Box::new(binding_expr.clone()),
+                expr_span: binding_expr.span,
             });
         }
     }
@@ -1028,7 +1034,7 @@ impl TypeChecker {
         if let Some(witness) = Self::find_missing_witness(&matrix, &[expr_ty.clone()]) {
             self.push_error(TypeError::NonexhaustiveLetRecPatterns {
                 missing: witness,
-                expr: Box::new(binding_expr.clone()),
+                expr_span: binding_expr.span,
             });
         }
     }
@@ -1284,8 +1290,8 @@ impl TypeChecker {
             let first = &row[0];
             let stripped = Self::strip_asc(first);
             if Self::is_catch_all(first)
-                || matches!(stripped, Pattern::True if is_true)
-                || matches!(stripped, Pattern::False if !is_true)
+                || matches!(&stripped.node, PatternKind::True if is_true)
+                || matches!(&stripped.node, PatternKind::False if !is_true)
             {
                 out.push(row[1..].to_vec());
             }
@@ -1297,7 +1303,9 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
-            if Self::is_catch_all(first) || matches!(Self::strip_asc(first), Pattern::Int(0)) {
+            if Self::is_catch_all(first)
+                || matches!(&Self::strip_asc(first).node, PatternKind::Int(0))
+            {
                 out.push(row[1..].to_vec());
             }
         }
@@ -1310,21 +1318,21 @@ impl TypeChecker {
             let first = &row[0];
             if Self::is_catch_all(first) {
                 let mut new_row = Vec::with_capacity(row.len());
-                new_row.push(Pattern::Var("_".to_string()));
+                new_row.push(Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                 new_row.extend(row[1..].iter().cloned());
                 out.push(new_row);
                 continue;
             }
-            match Self::strip_asc(first) {
-                Pattern::Succ(inner) => {
+            match &Self::strip_asc(first).node {
+                PatternKind::Succ(inner) => {
                     let mut new_row = Vec::with_capacity(row.len());
                     new_row.push(*inner.clone());
                     new_row.extend(row[1..].iter().cloned());
                     out.push(new_row);
                 }
-                Pattern::Int(k) if *k > 0 => {
+                PatternKind::Int(k) if *k > 0 => {
                     let mut new_row = Vec::with_capacity(row.len());
-                    new_row.push(Pattern::Int(*k - 1));
+                    new_row.push(Spanned::new(PatternKind::Int(*k - 1), 0, 0));
                     new_row.extend(row[1..].iter().cloned());
                     out.push(new_row);
                 }
@@ -1338,7 +1346,9 @@ impl TypeChecker {
         let mut out = Vec::with_capacity(matrix.len());
         for row in matrix {
             let first = &row[0];
-            if Self::is_catch_all(first) || matches!(Self::strip_asc(first), Pattern::Unit) {
+            if Self::is_catch_all(first)
+                || matches!(&Self::strip_asc(first).node, PatternKind::Unit)
+            {
                 out.push(row[1..].to_vec());
             }
         }
@@ -1351,12 +1361,12 @@ impl TypeChecker {
             let first = &row[0];
             if Self::is_catch_all(first) {
                 let mut new_row = Vec::with_capacity(row.len());
-                new_row.push(Pattern::Var("_".to_string()));
+                new_row.push(Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                 new_row.extend(row[1..].iter().cloned());
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Inl(inner) = Self::strip_asc(first) {
+            if let PatternKind::Inl(inner) = &Self::strip_asc(first).node {
                 let mut new_row = Vec::with_capacity(row.len());
                 new_row.push(*inner.clone());
                 new_row.extend(row[1..].iter().cloned());
@@ -1372,12 +1382,12 @@ impl TypeChecker {
             let first = &row[0];
             if Self::is_catch_all(first) {
                 let mut new_row = Vec::with_capacity(row.len());
-                new_row.push(Pattern::Var("_".to_string()));
+                new_row.push(Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                 new_row.extend(row[1..].iter().cloned());
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Inr(inner) = Self::strip_asc(first) {
+            if let PatternKind::Inr(inner) = &Self::strip_asc(first).node {
                 let mut new_row = Vec::with_capacity(row.len());
                 new_row.push(*inner.clone());
                 new_row.extend(row[1..].iter().cloned());
@@ -1393,12 +1403,14 @@ impl TypeChecker {
             let first = &row[0];
             if Self::is_catch_all(first) {
                 let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
-                new_row.extend((0..arity).map(|_| Pattern::Var("_".to_string())));
+                new_row.extend(
+                    (0..arity).map(|_| Spanned::new(PatternKind::Var("_".to_string()), 0, 0)),
+                );
                 new_row.extend(row[1..].iter().cloned());
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Tuple(pats) = Self::strip_asc(first) {
+            if let PatternKind::Tuple(pats) = &Self::strip_asc(first).node {
                 let mut new_row = Vec::with_capacity(pats.len() + row.len().saturating_sub(1));
                 new_row.extend(pats.iter().cloned());
                 new_row.extend(row[1..].iter().cloned());
@@ -1415,19 +1427,21 @@ impl TypeChecker {
             let first = &row[0];
             if Self::is_catch_all(first) {
                 let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
-                new_row.extend((0..arity).map(|_| Pattern::Var("_".to_string())));
+                new_row.extend(
+                    (0..arity).map(|_| Spanned::new(PatternKind::Var("_".to_string()), 0, 0)),
+                );
                 new_row.extend(row[1..].iter().cloned());
                 out.push(new_row);
                 continue;
             }
-            if let Pattern::Record(labelled_pats) = Self::strip_asc(first) {
+            if let PatternKind::Record(labelled_pats) = &Self::strip_asc(first).node {
                 let mut new_row = Vec::with_capacity(arity + row.len().saturating_sub(1));
                 for ft in field_types {
                     let pat = labelled_pats
                         .iter()
                         .find(|lp| lp.label == ft.name)
                         .map(|lp| lp.pattern.clone())
-                        .unwrap_or_else(|| Pattern::Var("_".to_string()));
+                        .unwrap_or_else(|| Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                     new_row.push(pat);
                 }
                 new_row.extend(row[1..].iter().cloned());
@@ -1442,7 +1456,7 @@ impl TypeChecker {
         for row in matrix {
             let first = &row[0];
             if Self::is_catch_all(first)
-                || matches!(Self::strip_asc(first), Pattern::List(pats) if pats.is_empty())
+                || matches!(&Self::strip_asc(first).node, PatternKind::List(pats) if pats.is_empty())
             {
                 out.push(row[1..].to_vec());
             }
@@ -1456,24 +1470,24 @@ impl TypeChecker {
             let first = &row[0];
             if Self::is_catch_all(first) {
                 let mut new_row = Vec::with_capacity(row.len() + 1);
-                new_row.push(Pattern::Var("_".to_string()));
-                new_row.push(Pattern::Var("_".to_string()));
+                new_row.push(Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
+                new_row.push(Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                 new_row.extend(row[1..].iter().cloned());
                 out.push(new_row);
                 continue;
             }
-            match Self::strip_asc(first) {
-                Pattern::Cons(h, t) => {
+            match &Self::strip_asc(first).node {
+                PatternKind::Cons(h, t) => {
                     let mut new_row = Vec::with_capacity(row.len() + 1);
                     new_row.push(*h.clone());
                     new_row.push(*t.clone());
                     new_row.extend(row[1..].iter().cloned());
                     out.push(new_row);
                 }
-                Pattern::List(pats) if !pats.is_empty() => {
+                PatternKind::List(pats) if !pats.is_empty() => {
                     let mut new_row = Vec::with_capacity(row.len() + 1);
                     new_row.push(pats[0].clone());
-                    new_row.push(Pattern::List(pats[1..].to_vec()));
+                    new_row.push(Spanned::new(PatternKind::List(pats[1..].to_vec()), 0, 0));
                     new_row.extend(row[1..].iter().cloned());
                     out.push(new_row);
                 }
@@ -1490,7 +1504,7 @@ impl TypeChecker {
             if Self::is_catch_all(first) {
                 if has_payload {
                     let mut new_row = Vec::with_capacity(row.len());
-                    new_row.push(Pattern::Var("_".to_string()));
+                    new_row.push(Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                     new_row.extend(row[1..].iter().cloned());
                     out.push(new_row);
                 } else {
@@ -1499,7 +1513,7 @@ impl TypeChecker {
                 continue;
             }
 
-            if let Pattern::Variant { label: l, data } = Self::strip_asc(first) {
+            if let PatternKind::Variant { label: l, data } = &Self::strip_asc(first).node {
                 if l != label {
                     continue;
                 }
@@ -1507,7 +1521,7 @@ impl TypeChecker {
                     let inner = data
                         .as_ref()
                         .map(|d| *d.clone())
-                        .unwrap_or_else(|| Pattern::Var("_".to_string()));
+                        .unwrap_or_else(|| Spanned::new(PatternKind::Var("_".to_string()), 0, 0));
                     let mut new_row = Vec::with_capacity(row.len());
                     new_row.push(inner);
                     new_row.extend(row[1..].iter().cloned());
@@ -1521,48 +1535,52 @@ impl TypeChecker {
     }
 
     fn pattern_bound_names(pattern: &Pattern) -> Vec<String> {
-        match pattern {
-            Pattern::Var(name) => vec![name.clone()],
-            Pattern::Asc(inner, _) | Pattern::CastAs(inner, _) => Self::pattern_bound_names(inner),
-            Pattern::Tuple(patterns) | Pattern::List(patterns) => patterns
+        match &pattern.node {
+            PatternKind::Var(name) => vec![name.clone()],
+            PatternKind::Asc(inner, _) | PatternKind::CastAs(inner, _) => {
+                Self::pattern_bound_names(inner)
+            }
+            PatternKind::Tuple(patterns) | PatternKind::List(patterns) => patterns
                 .iter()
                 .flat_map(Self::pattern_bound_names)
                 .collect(),
-            Pattern::Cons(head, tail) => {
+            PatternKind::Cons(head, tail) => {
                 let mut names = Self::pattern_bound_names(head);
                 names.extend(Self::pattern_bound_names(tail));
                 names
             }
-            Pattern::Record(lps) => lps
+            PatternKind::Record(lps) => lps
                 .iter()
                 .flat_map(|lp| Self::pattern_bound_names(&lp.pattern))
                 .collect(),
-            Pattern::Inl(inner) | Pattern::Inr(inner) | Pattern::Succ(inner) => {
+            PatternKind::Inl(inner) | PatternKind::Inr(inner) | PatternKind::Succ(inner) => {
                 Self::pattern_bound_names(inner)
             }
-            Pattern::Variant { data, .. } => {
+            PatternKind::Variant { data, .. } => {
                 data.as_deref().map_or(vec![], Self::pattern_bound_names)
             }
-            Pattern::True | Pattern::False | Pattern::Unit | Pattern::Int(_) => vec![],
+            PatternKind::True | PatternKind::False | PatternKind::Unit | PatternKind::Int(_) => {
+                vec![]
+            }
         }
     }
 
     fn extend_ctx_by_pattern(&mut self, ctx: &mut Context, pattern: &Pattern, ty: &Type) {
-        match pattern {
-            Pattern::Var(name) => {
+        match &pattern.node {
+            PatternKind::Var(name) => {
                 ctx.extend(name.clone(), ty.clone());
             }
 
-            Pattern::Asc(inner, ascribed_ty) => {
+            PatternKind::Asc(inner, ascribed_ty) => {
                 self.assert_types_equal(ty, ascribed_ty);
                 self.extend_ctx_by_pattern(ctx, inner, ascribed_ty);
             }
 
-            Pattern::CastAs(inner, target_ty) => {
+            PatternKind::CastAs(inner, target_ty) => {
                 self.extend_ctx_by_pattern(ctx, inner, target_ty);
             }
 
-            Pattern::Tuple(patterns) => match ty {
+            PatternKind::Tuple(patterns) => match ty {
                 Type::Tuple(elem_types) => {
                     for (p, t) in patterns.iter().zip(elem_types) {
                         self.extend_ctx_by_pattern(ctx, p, t);
@@ -1571,18 +1589,18 @@ impl TypeChecker {
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "tuple".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::Record(labelled_patterns) => match ty {
+            PatternKind::Record(labelled_patterns) => match ty {
                 Type::Record(field_types) => {
                     let mut seen = HashMap::new();
                     for lp in labelled_patterns {
                         if seen.insert(lp.label.clone(), ()).is_some() {
                             self.push_error(TypeError::DuplicateRecordPatternFields {
                                 field: lp.label.clone(),
-                                pat: Box::new(pattern.clone()),
+                                pat_span: pattern.span,
                             });
                             continue;
                         }
@@ -1592,7 +1610,7 @@ impl TypeChecker {
                             self.push_error(TypeError::UnexpectedFieldAccess {
                                 field: lp.label.clone(),
                                 record_type: ty.clone(),
-                                expr: None,
+                                expr_span: None,
                             });
                         }
                     }
@@ -1608,18 +1626,18 @@ impl TypeChecker {
                         self.push_error(TypeError::UnexpectedPatternForType {
                             pattern_desc: "record".to_string(),
                             scrutinee_type: ty.clone(),
-                            pat: Box::new(pattern.clone()),
+                            pat_span: pattern.span,
                         });
                     }
                 }
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "record".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::List(patterns) => match ty {
+            PatternKind::List(patterns) => match ty {
                 Type::List(elem_ty) => {
                     for p in patterns {
                         self.extend_ctx_by_pattern(ctx, p, elem_ty);
@@ -1628,11 +1646,11 @@ impl TypeChecker {
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "list".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::Cons(head_pat, tail_pat) => match ty {
+            PatternKind::Cons(head_pat, tail_pat) => match ty {
                 Type::List(elem_ty) => {
                     self.extend_ctx_by_pattern(ctx, head_pat, elem_ty);
                     self.extend_ctx_by_pattern(ctx, tail_pat, ty);
@@ -1640,42 +1658,42 @@ impl TypeChecker {
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "cons".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::Inl(inner) => match ty {
+            PatternKind::Inl(inner) => match ty {
                 Type::Sum(left, _) => self.extend_ctx_by_pattern(ctx, inner, left),
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "inl".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::Inr(inner) => match ty {
+            PatternKind::Inr(inner) => match ty {
                 Type::Sum(_, right) => self.extend_ctx_by_pattern(ctx, inner, right),
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "inr".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::Variant { label, data } => match ty {
+            PatternKind::Variant { label, data } => match ty {
                 Type::Variant(variants) => {
                     if let Some(vt) = variants.iter().find(|v| v.name == *label) {
                         match (&vt.ty, data) {
                             (Some(_), None) => {
                                 self.push_error(TypeError::UnexpectedNullaryVariantPattern {
                                     label: label.clone(),
-                                    pat: Box::new(pattern.clone()),
+                                    pat_span: pattern.span,
                                 })
                             }
                             (None, Some(_)) => {
                                 self.push_error(TypeError::UnexpectedNonNullaryVariantPattern {
                                     label: label.clone(),
-                                    pat: Box::new(pattern.clone()),
+                                    pat_span: pattern.span,
                                 })
                             }
                             (Some(inner_ty), Some(inner_pat)) => {
@@ -1687,52 +1705,52 @@ impl TypeChecker {
                         self.push_error(TypeError::UnexpectedVariantLabel {
                             label: label.clone(),
                             variant_type: ty.clone(),
-                            expr: None,
+                            expr_span: None,
                         });
                     }
                 }
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "variant".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::Succ(inner) => match ty {
+            PatternKind::Succ(inner) => match ty {
                 Type::Nat => self.extend_ctx_by_pattern(ctx, inner, &Type::Nat),
                 _ => self.push_error(TypeError::UnexpectedPatternForType {
                     pattern_desc: "succ".to_string(),
                     scrutinee_type: ty.clone(),
-                    pat: Box::new(pattern.clone()),
+                    pat_span: pattern.span,
                 }),
             },
 
-            Pattern::True | Pattern::False => {
+            PatternKind::True | PatternKind::False => {
                 if !matches!(ty, Type::Bool) {
                     self.push_error(TypeError::UnexpectedPatternForType {
                         pattern_desc: "bool literal".to_string(),
                         scrutinee_type: ty.clone(),
-                        pat: Box::new(pattern.clone()),
+                        pat_span: pattern.span,
                     });
                 }
             }
 
-            Pattern::Unit => {
+            PatternKind::Unit => {
                 if !matches!(ty, Type::Unit) {
                     self.push_error(TypeError::UnexpectedPatternForType {
                         pattern_desc: "unit".to_string(),
                         scrutinee_type: ty.clone(),
-                        pat: Box::new(pattern.clone()),
+                        pat_span: pattern.span,
                     });
                 }
             }
 
-            Pattern::Int(_) => {
+            PatternKind::Int(_) => {
                 if !matches!(ty, Type::Nat) {
                     self.push_error(TypeError::UnexpectedPatternForType {
                         pattern_desc: "nat literal".to_string(),
                         scrutinee_type: ty.clone(),
-                        pat: Box::new(pattern.clone()),
+                        pat_span: pattern.span,
                     });
                 }
             }
