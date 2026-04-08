@@ -2,8 +2,9 @@ use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -196,4 +197,235 @@ fn stage1_suite_run() {
 
     let outcome = run_all(&config).expect("suite should run");
     assert_eq!(outcome, 0, "Stage 1 suite reported failures");
+}
+
+// ---------------------------------------------------------------------------
+// Etalon comparison (docker run -i fizruk/stella typecheck)
+// ---------------------------------------------------------------------------
+
+struct EtalonOutput {
+    ok: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// Run the etalon typechecker on a file via Docker.
+///
+/// Returns `Ok(Some(_))` with the full output, or `Ok(None)` when Docker is
+/// not available so the caller can skip the comparison.
+fn run_etalon(file: &Path) -> io::Result<Option<EtalonOutput>> {
+    let source = fs::read(file)?;
+
+    let mut child = match Command::new("docker")
+        .args(["run", "--rm", "-i", "fizruk/stella", "typecheck"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+        Ok(child) => child,
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&source)?;
+    }
+
+    let output = child.wait_with_output()?;
+    Ok(Some(EtalonOutput {
+        ok: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }))
+}
+
+/// Extract the error tag from our typechecker's output.
+/// Our format: `ERROR_SOMETHING:\n  ...` — the tag is the first word before `:`.
+fn extract_our_tag(output: &str) -> Option<&str> {
+    let first = output.lines().next()?;
+    let tag = first.split(':').next()?.trim();
+    if tag.starts_with("ERROR_") { Some(tag) } else { None }
+}
+
+/// Extract the error tag from the etalon's output.
+/// Handles two formats:
+///  - `Type Error Tag: [ERROR_SOMETHING]`
+///  - `Unsupported Syntax Error: ERROR_SOMETHING`
+fn extract_etalon_tag(output: &str) -> Option<&str> {
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("Type Error Tag: [") {
+            return Some(rest.trim_end_matches(']'));
+        }
+        if let Some(rest) = line.strip_prefix("Unsupported Syntax Error: ") {
+            let tag = rest.trim();
+            if tag.starts_with("ERROR_") {
+                return Some(tag);
+            }
+        }
+    }
+    None
+}
+
+/// Collect every `.stella` file reachable from `roots` without any marker
+/// filtering (used for the etalon comparison where we don't use expected
+/// well-/ill-typed labels).
+fn collect_stella_files(roots: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+    let mut stack: Vec<PathBuf> = roots.to_vec();
+    let mut files: Vec<PathBuf> = Vec::new();
+
+    while let Some(path) = stack.pop() {
+        let metadata = match fs::metadata(&path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err),
+        };
+
+        if metadata.is_dir() {
+            for entry in fs::read_dir(&path)? {
+                stack.push(entry?.path());
+            }
+        } else if metadata.is_file() && path.extension() == Some(OsStr::new("stella")) {
+            files.push(path);
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn run_compare_case(
+    bin_path: &Path,
+    repo_root: &Path,
+    file: &Path,
+    pass: &mut u32,
+    fail: &mut u32,
+    docker_missing: &mut bool,
+) -> io::Result<()> {
+    if *docker_missing {
+        return Ok(());
+    }
+
+    let our_output = Command::new(bin_path)
+        .arg(file)
+        .output()
+        .map_err(|e| io::Error::new(e.kind(), format!("failed to run {}: {e}", bin_path.display())))?;
+    let our_ok = our_output.status.success();
+    let our_stdout = String::from_utf8_lossy(&our_output.stdout).into_owned();
+    let our_stderr = String::from_utf8_lossy(&our_output.stderr).into_owned();
+
+    let etalon = match run_etalon(file)? {
+        None => {
+            eprintln!("[SKIP] docker not available — etalon comparison disabled");
+            *docker_missing = true;
+            return Ok(());
+        }
+        Some(v) => v,
+    };
+
+    let rel = file.strip_prefix(repo_root).unwrap_or(file).display().to_string();
+
+    // Phase 1: compare pass/fail
+    if our_ok != etalon.ok {
+        *fail += 1;
+        eprintln!("[DISAGREE outcome] {}", rel);
+        eprintln!(
+            "  ours: {}  etalon: {}",
+            if our_ok { "OK" } else { "ERROR" },
+            if etalon.ok { "OK" } else { "ERROR" },
+        );
+        print_output("ours", &our_stdout, &our_stderr);
+        print_output("etalon", &etalon.stdout, &etalon.stderr);
+        return Ok(());
+    }
+
+    // Phase 2: when both report an error, compare the error tag
+    if !our_ok {
+        let our_tag = extract_our_tag(&our_stderr);
+        let etalon_tag = extract_etalon_tag(&etalon.stdout).or_else(|| extract_etalon_tag(&etalon.stderr));
+        if our_tag != etalon_tag {
+            *fail += 1;
+            eprintln!("[DISAGREE tag] {}", rel);
+            eprintln!(
+                "  ours: {}  etalon: {}",
+                our_tag.unwrap_or("<no tag>"),
+                etalon_tag.unwrap_or("<no tag>"),
+            );
+            print_output("ours", &our_stdout, &our_stderr);
+            print_output("etalon", &etalon.stdout, &etalon.stderr);
+            return Ok(());
+        }
+    }
+
+    *pass += 1;
+    Ok(())
+}
+
+fn print_output(label: &str, stdout: &str, stderr: &str) {
+    let combined = format!("{}{}", stdout, stderr);
+    let mut lines = combined.lines().peekable();
+    if lines.peek().is_some() {
+        eprintln!("  {} output:", label);
+        for line in lines.take(6) {
+            eprintln!("    {}", line);
+        }
+    }
+}
+
+fn run_all_compare(config: &Config) -> io::Result<u32> {
+    let suite_root = config.repo_root.join("tests/stella_test_suite/stage1");
+    let roots = vec![
+        suite_root.join("well-typed"),
+        suite_root.join("ill-typed"),
+        suite_root.join("extra"),
+        suite_root.join("failed"),
+    ];
+
+    let files = collect_stella_files(&roots)?;
+    let mut pass: u32 = 0;
+    let mut fail: u32 = 0;
+    let mut docker_missing = false;
+
+    for file in &files {
+        run_compare_case(
+            &config.bin_path,
+            &config.repo_root,
+            file,
+            &mut pass,
+            &mut fail,
+            &mut docker_missing,
+        )?;
+    }
+
+    if docker_missing {
+        eprintln!("Docker was not found; etalon comparison was skipped entirely.");
+    } else {
+        println!("\nEtalon comparison: {}/{} agree", pass, pass + fail);
+    }
+
+    Ok(fail)
+}
+
+/// Compare our typechecker against the reference Docker image on all stage-1
+/// test cases.  Run with:
+///
+/// ```
+/// STELLA_COMPARE_ETALON=1 cargo test stage1_suite_compare_etalon -- --nocapture
+/// ```
+#[test]
+fn stage1_suite_compare_etalon() {
+    if env::var("STELLA_COMPARE_ETALON").unwrap_or_default() != "1" {
+        eprintln!("Skipping etalon comparison (set STELLA_COMPARE_ETALON=1 to enable)");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let target_dir_override = env::var("CARGO_TARGET_DIR").ok().map(PathBuf::from);
+    let bin_path = resolve_bin(&repo_root, target_dir_override)
+        .expect("stella-typechecker binary should be built by cargo");
+
+    let config = Config { repo_root, bin_path };
+
+    let outcome = run_all_compare(&config).expect("etalon comparison should run");
+    assert_eq!(outcome, 0, "Etalon comparison found disagreements between our typechecker and fizruk/stella");
 }

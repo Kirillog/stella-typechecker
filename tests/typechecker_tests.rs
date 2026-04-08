@@ -842,9 +842,9 @@ fn test_nonexhaustive_let_rec_patterns_missing_inr() {
     assert!(
         has_error(&errors, |e| matches!(
             e,
-            TypeError::NonexhaustiveLetRecPatterns { .. }
+            TypeError::AmbiguousPatternType { .. }
         )),
-        "expected NonexhaustiveLetRecPatterns, got: {errors:?}"
+        "expected AmbiguousPatternType, got: {errors:?}"
     );
 }
 

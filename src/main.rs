@@ -1,15 +1,21 @@
+use std::io::Read;
 use stella_typechecker::{parser, typechecker};
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("Path to file expected");
-        std::process::exit(1);
-    });
-
-    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("Cannot read {path}: {e}");
-        std::process::exit(1);
-    });
+    let src = match std::env::args().nth(1).as_deref() {
+        None | Some("-") => {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf).unwrap_or_else(|e| {
+                eprintln!("Cannot read stdin: {e}");
+                std::process::exit(1);
+            });
+            buf
+        }
+        Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("Cannot read {path}: {e}");
+            std::process::exit(1);
+        }),
+    };
 
     let program = match parser::ProgramParser::new().parse(&src) {
         Ok(program) => program,

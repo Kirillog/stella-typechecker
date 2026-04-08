@@ -142,9 +142,10 @@ impl TypeChecker {
                     if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
                         self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.check(&local_ctx, &binding.expr, &ty);
-                    } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
-                        self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
-                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    } else {
+                        self.push_error(TypeError::AmbiguousPatternType {
+                            pat_span: binding.pattern.span,
+                        });
                     }
                 }
                 self.infer(&local_ctx, body)
@@ -274,10 +275,9 @@ impl TypeChecker {
                         None
                     }
                     _ => {
-                        self.push_error(TypeError::UnexpectedTypeForExpression {
-                            expected: Type::Fun(vec![Type::Auto], Box::new(Type::Auto)),
-                            got: f_ty,
-                            expr_span: None,
+                        self.push_error(TypeError::NotAFunction {
+                            ty: f_ty,
+                            expr_span: _f.span,
                         });
                         None
                     }
@@ -436,13 +436,20 @@ impl TypeChecker {
                     });
                     return None;
                 }
-                let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
-                let mut case_types = Vec::new();
-                for match_case in cases {
+                let errors_before = self.errors.len();
+                let mut local_ctxs = Vec::new();
+                for match_case in cases.iter() {
                     let mut local_ctx = ctx.clone();
                     self.extend_ctx_by_pattern(&mut local_ctx, &match_case.pattern, &scrutinee_ty);
-                    if let Some(case_ty) = self.infer(&local_ctx, &match_case.expr) {
+                    local_ctxs.push(local_ctx);
+                }
+                if self.errors.len() == errors_before {
+                    let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
+                    self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
+                }
+                let mut case_types = Vec::new();
+                for (match_case, local_ctx) in cases.iter().zip(local_ctxs.iter()) {
+                    if let Some(case_ty) = self.infer(local_ctx, &match_case.expr) {
                         case_types.push(case_ty);
                     }
                 }
@@ -716,16 +723,23 @@ impl TypeChecker {
                             expr_span: expr.span,
                         });
                     } else {
-                        let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                        self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
-                        for match_case in cases {
+                        let errors_before = self.errors.len();
+                        let mut local_ctxs = Vec::new();
+                        for match_case in cases.iter() {
                             let mut local_ctx = ctx.clone();
                             self.extend_ctx_by_pattern(
                                 &mut local_ctx,
                                 &match_case.pattern,
                                 &scrutinee_ty,
                             );
-                            self.check(&local_ctx, &match_case.expr, expected);
+                            local_ctxs.push(local_ctx);
+                        }
+                        if self.errors.len() == errors_before {
+                            let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
+                            self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
+                        }
+                        for (match_case, local_ctx) in cases.iter().zip(local_ctxs.iter()) {
+                            self.check(local_ctx, &match_case.expr, expected);
                         }
                     }
                 }
@@ -772,9 +786,10 @@ impl TypeChecker {
                     if let Some(ty) = Self::extract_declared_type(&binding.pattern) {
                         self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
                         self.check(&local_ctx, &binding.expr, &ty);
-                    } else if let Some(ty) = self.infer(&local_ctx, &binding.expr) {
-                        self.check_letrec_exhaustiveness(&binding.pattern, &ty, &binding.expr);
-                        self.extend_ctx_by_pattern(&mut local_ctx, &binding.pattern, &ty);
+                    } else {
+                        self.push_error(TypeError::AmbiguousPatternType {
+                            pat_span: binding.pattern.span,
+                        });
                     }
                 }
                 self.check(&local_ctx, body, expected);
@@ -1718,10 +1733,10 @@ impl TypeChecker {
                             (None, None) => {}
                         }
                     } else {
-                        self.push_error(TypeError::UnexpectedVariantLabel {
-                            label: label.clone(),
-                            variant_type: ty.clone(),
-                            expr_span: None,
+                        self.push_error(TypeError::UnexpectedPatternForType {
+                            pattern_desc: format!("variant label `{}`", label),
+                            scrutinee_type: ty.clone(),
+                            pat_span: pattern.span,
                         });
                     }
                 }

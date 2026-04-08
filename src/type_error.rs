@@ -326,6 +326,10 @@ pub enum TypeError {
         missing: Vec<String>,
         expr_span: Span,
     },
+
+    AmbiguousPatternType {
+        pat_span: Span,
+    },
 }
 
 impl TypeError {
@@ -356,6 +360,7 @@ impl TypeError {
             TypeError::NonexhaustiveMatchPatterns { expr_span, .. } => Some(*expr_span),
             TypeError::NonexhaustiveLetPatterns { expr_span, .. } => Some(*expr_span),
             TypeError::NonexhaustiveLetRecPatterns { expr_span, .. } => Some(*expr_span),
+            TypeError::AmbiguousPatternType { pat_span } => Some(*pat_span),
             TypeError::UndefinedVariable { expr_span, .. } => Some(*expr_span),
             TypeError::UnexpectedTypeForParameter { expr_span, .. } => Some(*expr_span),
             TypeError::UnexpectedTupleLength { expr_span, .. } => Some(*expr_span),
@@ -418,7 +423,7 @@ impl fmt::Display for TypeError {
             TypeError::AmbiguousVariantType { .. } =>
                 write!(f, "ERROR_AMBIGUOUS_VARIANT_TYPE:\n  cannot determine variant type (type annotation required)"),
             TypeError::AmbiguousList { .. } =>
-                write!(f, "ERROR_AMBIGUOUS_LIST:\n  cannot determine list element type (type annotation required)"),
+                write!(f, "ERROR_AMBIGUOUS_LIST_TYPE:\n  cannot determine list element type (type annotation required)"),
             TypeError::IllegalEmptyMatching { .. } =>
                 write!(f, "ERROR_ILLEGAL_EMPTY_MATCHING:\n  match expression must have at least one case"),
             TypeError::NonexhaustiveMatchPatterns { missing, .. } =>
@@ -463,6 +468,8 @@ impl fmt::Display for TypeError {
                 write!(f, "ERROR_NONEXHAUSTIVE_LET_PATTERNS:\n  missing cases: {}", missing.join(", ")),
             TypeError::NonexhaustiveLetRecPatterns { missing, .. } =>
                 write!(f, "ERROR_NONEXHAUSTIVE_LET_REC_PATTERNS:\n  missing cases: {}", missing.join(", ")),
+            TypeError::AmbiguousPatternType { .. } =>
+                write!(f, "ERROR_AMBIGUOUS_PATTERN_TYPE:\n  cannot infer the type for pattern"),
         }
     }
 }
