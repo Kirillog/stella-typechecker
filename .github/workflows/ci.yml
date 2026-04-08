@@ -26,3 +26,9 @@ jobs:
 
       - name: Test
         run: cargo test --locked --all-targets
+
+      - name: Pull etalon Docker image
+        run: docker pull fizruk/stella
+
+      - name: Etalon comparison test
+        run: STELLA_COMPARE_ETALON=1 cargo test --locked suite_compare_etalon -- --nocapture

@@ -12,10 +12,9 @@ struct Config {
     bin_path: PathBuf,
 }
 
-fn run_all(config: &Config) -> io::Result<u32> {
-    let suite_root = config.repo_root.join("tests/stella_test_suite/stage1");
-    let well_typed_roots = vec![suite_root.join("well-typed"), suite_root.join("extra")];
-    let ill_typed_roots = vec![suite_root.join("ill-typed"), suite_root.join("extra")];
+fn run_all(config: &Config, stage_root: &Path) -> io::Result<u32> {
+    let well_typed_roots = vec![stage_root.join("well-typed"), stage_root.join("extra")];
+    let ill_typed_roots = vec![stage_root.join("ill-typed"), stage_root.join("extra")];
 
     let mut pass: u32 = 0;
     let mut fail: u32 = 0;
@@ -184,19 +183,31 @@ fn normalize_dir(base: &Path, dir: &Path) -> io::Result<PathBuf> {
 }
 
 #[test]
-fn stage1_suite_run() {
+fn suite_run() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let target_dir_override = env::var("CARGO_TARGET_DIR").ok().map(PathBuf::from);
     let bin_path = resolve_bin(&repo_root, target_dir_override.clone())
         .expect("stella-typechecker binary should be built by cargo");
 
-    let config = Config {
-        repo_root,
-        bin_path,
-    };
+    let config = Config { repo_root: repo_root.clone(), bin_path };
+    let suite_root = repo_root.join("tests/stella_test_suite");
 
-    let outcome = run_all(&config).expect("suite should run");
-    assert_eq!(outcome, 0, "Stage 1 suite reported failures");
+    let mut total_fail: u32 = 0;
+    let mut entries: Vec<_> = fs::read_dir(&suite_root)
+        .expect("test suite directory should exist")
+        .map(|e| e.expect("directory entry").path())
+        .filter(|p| p.is_dir())
+        .collect();
+    entries.sort();
+
+    for stage_root in entries {
+        let stage_name = stage_root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        eprintln!("=== Suite run: {} ===", stage_name);
+        let fails = run_all(&config, &stage_root).expect("suite should run");
+        total_fail += fails;
+    }
+
+    assert_eq!(total_fail, 0, "Suite reported failures");
 }
 
 // ---------------------------------------------------------------------------
@@ -372,13 +383,12 @@ fn print_output(label: &str, stdout: &str, stderr: &str) {
     }
 }
 
-fn run_all_compare(config: &Config) -> io::Result<u32> {
-    let suite_root = config.repo_root.join("tests/stella_test_suite/stage1");
+fn run_all_compare(config: &Config, stage_root: &Path) -> io::Result<u32> {
     let roots = vec![
-        suite_root.join("well-typed"),
-        suite_root.join("ill-typed"),
-        suite_root.join("extra"),
-        suite_root.join("failed"),
+        stage_root.join("well-typed"),
+        stage_root.join("ill-typed"),
+        stage_root.join("extra"),
+        stage_root.join("failed"),
     ];
 
     let files = collect_stella_files(&roots)?;
@@ -406,14 +416,14 @@ fn run_all_compare(config: &Config) -> io::Result<u32> {
     Ok(fail)
 }
 
-/// Compare our typechecker against the reference Docker image on all stage-1
-/// test cases.  Run with:
+/// Compare our typechecker against the reference Docker image on all stages.
+/// Run with:
 ///
 /// ```
-/// STELLA_COMPARE_ETALON=1 cargo test stage1_suite_compare_etalon -- --nocapture
+/// STELLA_COMPARE_ETALON=1 cargo test suite_compare_etalon -- --nocapture
 /// ```
 #[test]
-fn stage1_suite_compare_etalon() {
+fn suite_compare_etalon() {
     if env::var("STELLA_COMPARE_ETALON").unwrap_or_default() != "1" {
         eprintln!("Skipping etalon comparison (set STELLA_COMPARE_ETALON=1 to enable)");
         return;
@@ -424,8 +434,21 @@ fn stage1_suite_compare_etalon() {
     let bin_path = resolve_bin(&repo_root, target_dir_override)
         .expect("stella-typechecker binary should be built by cargo");
 
-    let config = Config { repo_root, bin_path };
+    let config = Config { repo_root: repo_root.clone(), bin_path };
+    let suite_root = repo_root.join("tests/stella_test_suite");
 
-    let outcome = run_all_compare(&config).expect("etalon comparison should run");
-    assert_eq!(outcome, 0, "Etalon comparison found disagreements between our typechecker and fizruk/stella");
+    let mut total_fail: u32 = 0;
+    for entry in fs::read_dir(&suite_root).expect("test suite directory should exist") {
+        let entry = entry.expect("directory entry");
+        let stage_root = entry.path();
+        if !stage_root.is_dir() {
+            continue;
+        }
+        let stage_name = stage_root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        eprintln!("=== Etalon comparison: {} ===", stage_name);
+        let fails = run_all_compare(&config, &stage_root).expect("etalon comparison should run");
+        total_fail += fails;
+    }
+
+    assert_eq!(total_fail, 0, "Etalon comparison found disagreements between our typechecker and fizruk/stella");
 }
