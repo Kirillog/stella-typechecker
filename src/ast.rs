@@ -39,7 +39,86 @@ pub struct LanguageDecl;
 /// `extend with #feat1, #feat2 ;`
 #[derive(Debug, Clone)]
 pub struct Extension {
-    pub names: Vec<String>,
+    pub features: Vec<StellaExtension>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StellaExtension {
+    UnitType,
+    Pairs,
+    Tuples,
+    Records,
+    Variants,
+    NullaryVariantLabels,
+    SumTypes,
+    Lists,
+    NaturalLiterals,
+    Predecessor,
+    TypeAscriptions,
+    PatternAscriptions,
+    StructuralPatterns,
+    LetBindings,
+    LetPatterns,
+    LetRecBindings,
+    FixpointCombinator,
+    MultiparameterFunctions,
+    NullaryFunctions,
+    NestedFunctionDeclarations,
+    Sequencing,
+    References,
+    Panic,
+    Exceptions,
+    ExceptionTypeDeclaration,
+    OpenVariantExceptions,
+    StructuralSubtyping,
+    TypeCast,
+    TopType,
+    BottomType,
+    AmbiguousTypeAsBottom,
+    TryCastAs,
+    TypeCastPatterns,
+    Unknown(String),
+}
+
+impl From<&str> for StellaExtension {
+    fn from(s: &str) -> Self {
+        match s {
+            "#unit-type" => Self::UnitType,
+            "#pairs" => Self::Pairs,
+            "#tuples" => Self::Tuples,
+            "#records" => Self::Records,
+            "#variants" => Self::Variants,
+            "#nullary-variant-labels" => Self::NullaryVariantLabels,
+            "#sum-types" => Self::SumTypes,
+            "#lists" => Self::Lists,
+            "#natural-literals" => Self::NaturalLiterals,
+            "#predecessor" => Self::Predecessor,
+            "#type-ascriptions" => Self::TypeAscriptions,
+            "#pattern-ascriptions" => Self::PatternAscriptions,
+            "#structural-patterns" => Self::StructuralPatterns,
+            "#let-bindings" => Self::LetBindings,
+            "#let-patterns" => Self::LetPatterns,
+            "#letrec-bindings" => Self::LetRecBindings,
+            "#fixpoint-combinator" => Self::FixpointCombinator,
+            "#multiparameter-functions" => Self::MultiparameterFunctions,
+            "#nullary-functions" => Self::NullaryFunctions,
+            "#nested-function-declarations" => Self::NestedFunctionDeclarations,
+            "#sequencing" => Self::Sequencing,
+            "#references" => Self::References,
+            "#panic" => Self::Panic,
+            "#exceptions" => Self::Exceptions,
+            "#exception-type-declaration" => Self::ExceptionTypeDeclaration,
+            "#open-variant-exceptions" => Self::OpenVariantExceptions,
+            "#structural-subtyping" => Self::StructuralSubtyping,
+            "#type-cast" => Self::TypeCast,
+            "#top-type" => Self::TopType,
+            "#bottom-type" => Self::BottomType,
+            "#ambiguous-type-as-bottom" => Self::AmbiguousTypeAsBottom,
+            "#try-cast-as" => Self::TryCastAs,
+            "#type-cast-patterns" => Self::TypeCastPatterns,
+            other => Self::Unknown(other.to_owned()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

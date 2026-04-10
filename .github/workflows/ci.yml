@@ -31,4 +31,4 @@ jobs:
         run: docker pull fizruk/stella
 
       - name: Etalon comparison test
-        run: STELLA_COMPARE_ETALON=1 cargo test --locked suite_compare_etalon -- --nocapture
+        run: STELLA_COMPARE_ETALON=1 cargo test --locked -- --nocapture

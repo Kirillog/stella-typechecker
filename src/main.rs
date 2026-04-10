@@ -5,10 +5,12 @@ fn main() {
     let src = match std::env::args().nth(1).as_deref() {
         None | Some("-") => {
             let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf).unwrap_or_else(|e| {
-                eprintln!("Cannot read stdin: {e}");
-                std::process::exit(1);
-            });
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot read stdin: {e}");
+                    std::process::exit(1);
+                });
             buf
         }
         Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {

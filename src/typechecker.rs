@@ -1,6 +1,6 @@
 use crate::ast::{
     Decl, DeclFun, DeclFunGeneric, Expr, ExprKind, ParamDecl, Pattern, PatternKind, Program,
-    RecordFieldType, ReturnType, Spanned, Type, VariantFieldType,
+    RecordFieldType, ReturnType, Spanned, StellaExtension, Type, VariantFieldType,
 };
 use crate::type_error::{TypeCheckError, TypeError};
 use std::collections::{HashMap, HashSet};
@@ -9,6 +9,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone, Default)]
 pub struct Context {
     vars: HashMap<String, Type>,
+    pub exception_type: Option<Type>,
 }
 
 impl Context {
@@ -25,15 +26,12 @@ impl Context {
     }
 }
 
-pub fn types_equal(t1: &Type, t2: &Type) -> bool {
-    t1 == &Type::Auto || t2 == &Type::Auto || t1 == t2
-}
-
 #[derive(Default)]
 pub struct TypeChecker {
     errors: Vec<TypeCheckError>,
     current_function: Option<String>,
     src: Rc<str>,
+    extensions: HashSet<StellaExtension>,
 }
 
 impl TypeChecker {
@@ -49,8 +47,12 @@ impl TypeChecker {
         });
     }
 
+    fn types_equal(t1: &Type, t2: &Type) -> bool {
+        t1 == &Type::Auto || t2 == &Type::Auto || t1 == t2
+    }
+
     pub fn assert_types_equal(&mut self, expected: &Type, got: &Type) {
-        if !types_equal(expected, got) {
+        if !Self::types_equal(expected, got) {
             self.push_error(TypeError::UnexpectedTypeForExpression {
                 expected: expected.clone(),
                 got: got.clone(),
@@ -60,12 +62,76 @@ impl TypeChecker {
     }
 
     pub fn assert_types_equal_for_expr(&mut self, expected: &Type, got: &Type, expr: &Expr) {
-        if !types_equal(expected, got) {
+        if !Self::types_equal(expected, got) {
             self.push_error(TypeError::UnexpectedTypeForExpression {
                 expected: expected.clone(),
                 got: got.clone(),
                 expr_span: Some(expr.span),
             });
+        }
+    }
+
+    pub fn is_subtype(sub: &Type, sup: &Type) -> bool {
+        if sub == sup {
+            return true;
+        }
+        match (sub, sup) {
+            (Type::Auto, _) | (_, Type::Auto) => true,
+            (Type::Bottom, _) => true,
+            (_, Type::Top) => true,
+            (Type::Fun(sub_params, sub_ret), Type::Fun(sup_params, sup_ret)) => {
+                sub_params.len() == sup_params.len()
+                    && sup_params
+                        .iter()
+                        .zip(sub_params.iter())
+                        .all(|(sup_p, sub_p)| Self::is_subtype(sup_p, sub_p))
+                    && Self::is_subtype(sub_ret, sup_ret)
+            }
+            (Type::Tuple(sub_elems), Type::Tuple(sup_elems)) => {
+                sub_elems.len() == sup_elems.len()
+                    && sub_elems
+                        .iter()
+                        .zip(sup_elems.iter())
+                        .all(|(s, t)| Self::is_subtype(s, t))
+            }
+            (Type::Record(sub_fields), Type::Record(sup_fields)) => sup_fields.iter().all(|sf| {
+                sub_fields
+                    .iter()
+                    .find(|f| f.name == sf.name)
+                    .is_some_and(|f| Self::is_subtype(&f.ty, &sf.ty))
+            }),
+            (Type::Variant(sub_labels), Type::Variant(sup_labels)) => sub_labels.iter().all(|sl| {
+                sup_labels
+                    .iter()
+                    .find(|l| l.name == sl.name)
+                    .is_some_and(|l| match (&sl.ty, &l.ty) {
+                        (None, None) => true,
+                        (Some(st), Some(lt)) => Self::is_subtype(st, lt),
+                        _ => false,
+                    })
+            }),
+            (Type::List(sub_elem), Type::List(sup_elem)) => Self::is_subtype(sub_elem, sup_elem),
+            (Type::Sum(sl, sr), Type::Sum(tl, tr)) => {
+                Self::is_subtype(sl, tl) && Self::is_subtype(sr, tr)
+            }
+            _ => false,
+        }
+    }
+
+    pub fn assert_is_assignable(&mut self, expected: &Type, got: &Type, expr: &Expr) {
+        if self
+            .extensions
+            .contains(&StellaExtension::StructuralSubtyping)
+        {
+            if !Self::is_subtype(got, expected) {
+                self.push_error(TypeError::UnexpectedSubtype {
+                    expected: expected.clone(),
+                    got: got.clone(),
+                    expr_span: Some(expr.span),
+                });
+            }
+        } else {
+            self.assert_types_equal_for_expr(expected, got, expr);
         }
     }
 
@@ -95,8 +161,13 @@ impl TypeChecker {
                 Some(_ty.as_ref().clone())
             }
 
+            ExprKind::TypeCast(_e, _ty) => {
+                self.infer(ctx, _e);
+                Some(_ty.as_ref().clone())
+            }
+
             ExprKind::Sequence(e1, e2) => {
-                self.infer(ctx, e1)?;
+                self.check(ctx, e1, &Type::Unit);
                 self.infer(ctx, e2)
             }
 
@@ -358,26 +429,52 @@ impl TypeChecker {
                 None => None,
             },
 
-            ExprKind::Inl(_) | ExprKind::Inr(_) => {
-                self.push_error(TypeError::AmbiguousSumType {
-                    expr_span: expr.span,
-                });
-                None
+            ExprKind::Inl(inner) | ExprKind::Inr(inner) => {
+                if self
+                    .extensions
+                    .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                {
+                    let inner_ty = self.infer(ctx, inner)?;
+                    Some(Type::Sum(Box::new(inner_ty), Box::new(Type::Bottom)))
+                } else {
+                    self.push_error(TypeError::AmbiguousSumType {
+                        expr_span: expr.span,
+                    });
+                    None
+                }
             }
 
-            ExprKind::Variant { .. } => {
-                self.push_error(TypeError::AmbiguousVariantType {
-                    expr_span: expr.span,
-                });
-                None
+            ExprKind::Variant { label: _, payload } => {
+                if self
+                    .extensions
+                    .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                {
+                    // type-check the payload for side effects, then return Bottom
+                    if let Some(p) = payload {
+                        self.infer(ctx, p);
+                    }
+                    Some(Type::Bottom)
+                } else {
+                    self.push_error(TypeError::AmbiguousVariantType {
+                        expr_span: expr.span,
+                    });
+                    None
+                }
             }
 
             ExprKind::List(exprs) => {
                 if exprs.is_empty() {
-                    self.push_error(TypeError::AmbiguousList {
-                        expr_span: expr.span,
-                    });
-                    None
+                    if self
+                        .extensions
+                        .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                    {
+                        Some(Type::List(Box::new(Type::Bottom)))
+                    } else {
+                        self.push_error(TypeError::AmbiguousList {
+                            expr_span: expr.span,
+                        });
+                        None
+                    }
                 } else {
                     let ty = self.infer(ctx, &exprs[0])?;
                     exprs.iter().skip(1).for_each(|e| self.check(ctx, e, &ty));
@@ -462,6 +559,139 @@ impl TypeChecker {
                     None
                 }
             }
+            ExprKind::Panic => {
+                if self
+                    .extensions
+                    .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                {
+                    Some(Type::Bottom)
+                } else {
+                    self.push_error(TypeError::AmbiguousPanicType {
+                        expr_span: expr.span,
+                    });
+                    None
+                }
+            }
+
+            ExprKind::Throw(e) => {
+                match ctx.exception_type.clone() {
+                    Some(exn_ty) => {
+                        self.check(ctx, e, &exn_ty);
+                        if self
+                            .extensions
+                            .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                        {
+                            return Some(Type::Bottom);
+                        }
+                        self.push_error(TypeError::AmbiguousThrowType {
+                            expr_span: expr.span,
+                        });
+                    }
+                    None => {
+                        self.push_error(TypeError::ExceptionTypeNotDeclared {
+                            expr_span: expr.span,
+                        });
+                    }
+                }
+                None
+            }
+
+            ExprKind::TryCatch {
+                try_expr,
+                pattern,
+                catch_expr,
+            } => {
+                let result_ty = self.infer(ctx, try_expr)?;
+                let exn_ty = match ctx.exception_type.clone() {
+                    Some(t) => t,
+                    None => {
+                        self.push_error(TypeError::ExceptionTypeNotDeclared {
+                            expr_span: expr.span,
+                        });
+                        return None;
+                    }
+                };
+                let mut catch_ctx = ctx.clone();
+                self.extend_ctx_by_pattern(&mut catch_ctx, pattern, &exn_ty);
+                let catch_ty = self.infer(&catch_ctx, catch_expr)?;
+                self.assert_types_equal(&result_ty, &catch_ty);
+                Some(result_ty)
+            }
+
+            ExprKind::TryWith {
+                try_expr,
+                with_expr,
+            } => {
+                let result_ty = self.infer(ctx, try_expr)?;
+                self.check(ctx, with_expr, &result_ty);
+                Some(result_ty)
+            }
+
+            ExprKind::Ref(e) => {
+                let inner_ty = self.infer(ctx, e)?;
+                Some(Type::Ref(Box::new(inner_ty)))
+            }
+
+            ExprKind::Deref(e) => {
+                let ref_ty = self.infer(ctx, e)?;
+                match ref_ty {
+                    Type::Ref(inner) => Some(*inner),
+                    ty => {
+                        self.push_error(TypeError::NotAReference {
+                            ty,
+                            expr_span: e.span,
+                        });
+                        None
+                    }
+                }
+            }
+
+            ExprKind::Assign(lhs, rhs) => {
+                let lhs_ty = self.infer(ctx, lhs)?;
+                match lhs_ty {
+                    Type::Ref(inner) => {
+                        self.check(ctx, rhs, &inner);
+                        Some(Type::Unit)
+                    }
+                    ty => {
+                        self.push_error(TypeError::NotAReference {
+                            ty,
+                            expr_span: lhs.span,
+                        });
+                        None
+                    }
+                }
+            }
+
+            ExprKind::ConstMemory(_) => {
+                if self
+                    .extensions
+                    .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                {
+                    Some(Type::Ref(Box::new(Type::Bottom)))
+                } else {
+                    self.push_error(TypeError::AmbiguousReferenceType {
+                        expr_span: expr.span,
+                    });
+                    None
+                }
+            }
+
+            ExprKind::TryCastAs {
+                try_expr,
+                ty,
+                pattern,
+                catch_expr,
+                with_expr,
+            } => {
+                self.infer(ctx, try_expr);
+                let mut catch_ctx = ctx.clone();
+                self.extend_ctx_by_pattern(&mut catch_ctx, pattern, ty);
+                let catch_ty = self.infer(&catch_ctx, catch_expr)?;
+                self.check(ctx, with_expr, &catch_ty);
+                Some(catch_ty)
+            }
+
             _ => unimplemented!(),
         }
     }
@@ -522,7 +752,7 @@ impl TypeChecker {
                             self.check(ctx, arg, &param_ty);
                         }
                     }
-                    self.assert_types_equal(return_type.as_ref(), expected);
+                    self.assert_is_assignable(expected, return_type.as_ref(), expr);
                 }
                 Some(func_ty) => self.push_error(TypeError::NotAFunction {
                     ty: func_ty,
@@ -610,7 +840,12 @@ impl TypeChecker {
                         .filter(|n| !expected_names.contains(n))
                         .map(|n| n.to_string())
                         .collect();
-                    if !unexpected.is_empty() {
+                    // With structural subtyping, extra fields on the literal are fine
+                    if !unexpected.is_empty()
+                        && !self
+                            .extensions
+                            .contains(&StellaExtension::StructuralSubtyping)
+                    {
                         self.push_error(TypeError::UnexpectedRecordFields {
                             unexpected,
                             expr_span: expr.span,
@@ -646,12 +881,10 @@ impl TypeChecker {
                                     expr_span: expr.span,
                                 })
                             }
-                            (Some(_), None) => {
-                                self.push_error(TypeError::MissingDataForLabel {
-                                    label: label.clone(),
-                                    expr_span: expr.span,
-                                })
-                            }
+                            (Some(_), None) => self.push_error(TypeError::MissingDataForLabel {
+                                label: label.clone(),
+                                expr_span: expr.span,
+                            }),
                             (None, None) => {}
                             (Some(ty), Some(inner_expr)) => self.check(ctx, inner_expr, ty),
                         }
@@ -735,7 +968,8 @@ impl TypeChecker {
                             local_ctxs.push(local_ctx);
                         }
                         if self.errors.len() == errors_before {
-                            let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
+                            let patterns: Vec<&Pattern> =
+                                cases.iter().map(|c| &c.pattern).collect();
                             self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
                         }
                         for (match_case, local_ctx) in cases.iter().zip(local_ctxs.iter()) {
@@ -744,6 +978,11 @@ impl TypeChecker {
                     }
                 }
             }
+            ExprKind::Sequence(e1, e2) => {
+                self.check(ctx, e1, &Type::Unit);
+                self.check(ctx, e2, expected);
+            }
+
             ExprKind::Let(bindings, body) => {
                 let mut local_ctx = ctx.clone();
                 let mut seen_names: HashSet<String> = HashSet::new();
@@ -795,9 +1034,123 @@ impl TypeChecker {
                 self.check(&local_ctx, body, expected);
             }
 
+            ExprKind::Panic => {}
+
+            ExprKind::Throw(e) => match ctx.exception_type.clone() {
+                Some(exn_ty) => {
+                    self.check(ctx, e, &exn_ty);
+                }
+                None => {
+                    self.push_error(TypeError::ExceptionTypeNotDeclared {
+                        expr_span: expr.span,
+                    });
+                }
+            },
+
+            ExprKind::TryCatch {
+                try_expr,
+                pattern,
+                catch_expr,
+            } => {
+                let exn_ty = ctx.exception_type.clone();
+                self.check(ctx, try_expr, expected);
+                match exn_ty {
+                    Some(exn_ty) => {
+                        let mut catch_ctx = ctx.clone();
+                        self.extend_ctx_by_pattern(&mut catch_ctx, pattern, &exn_ty);
+                        self.check(&catch_ctx, catch_expr, expected);
+                    }
+                    None => {
+                        self.push_error(TypeError::ExceptionTypeNotDeclared {
+                            expr_span: expr.span,
+                        });
+                    }
+                }
+            }
+
+            ExprKind::TryWith {
+                try_expr,
+                with_expr,
+            } => {
+                self.check(ctx, try_expr, expected);
+                self.check(ctx, with_expr, expected);
+            }
+
+            ExprKind::Ref(e) => match expected {
+                Type::Ref(inner_ty) => {
+                    self.check(ctx, e, inner_ty);
+                }
+                _ => {
+                    self.push_error(TypeError::UnexpectedReference {
+                        expected: expected.clone(),
+                        expr_span: expr.span,
+                    });
+                }
+            },
+
+            ExprKind::Deref(e) => {
+                if matches!(e.node, ExprKind::ConstMemory(_)) {
+                    return;
+                }
+                if let Some(ref_ty) = self.infer(ctx, e) {
+                    match ref_ty {
+                        Type::Ref(inner) => {
+                            self.assert_is_assignable(expected, &inner, expr);
+                        }
+                        ty => {
+                            self.push_error(TypeError::NotAReference {
+                                ty,
+                                expr_span: e.span,
+                            });
+                        }
+                    }
+                }
+            }
+
+            ExprKind::Assign(lhs, rhs) => {
+                self.assert_types_equal(expected, &Type::Unit);
+                if let Some(lhs_ty) = self.infer(ctx, lhs) {
+                    match lhs_ty {
+                        Type::Ref(inner) => {
+                            self.check(ctx, rhs, &inner);
+                        }
+                        ty => {
+                            self.push_error(TypeError::NotAReference {
+                                ty,
+                                expr_span: lhs.span,
+                            });
+                        }
+                    }
+                }
+            }
+
+            ExprKind::ConstMemory(_) => match expected {
+                Type::Ref(_) => {}
+                _ => {
+                    self.push_error(TypeError::UnexpectedMemoryAddress {
+                        expected: expected.clone(),
+                        expr_span: expr.span,
+                    });
+                }
+            },
+
+            ExprKind::TryCastAs {
+                try_expr,
+                ty,
+                pattern,
+                catch_expr,
+                with_expr,
+            } => {
+                self.infer(ctx, try_expr);
+                let mut catch_ctx = ctx.clone();
+                self.extend_ctx_by_pattern(&mut catch_ctx, pattern, ty);
+                self.check(&catch_ctx, catch_expr, expected);
+                self.check(ctx, with_expr, expected);
+            }
+
             _ => {
                 if let Some(got) = self.infer(ctx, expr) {
-                    self.assert_types_equal_for_expr(expected, &got, expr);
+                    self.assert_is_assignable(expected, &got, expr);
                 }
             }
         }
@@ -806,10 +1159,17 @@ impl TypeChecker {
     fn check_decl(&mut self, ctx: &Context, decl: &Decl) {
         match decl {
             Decl::Fun(f) => self.check_fun(ctx, f),
-
             Decl::FunGeneric(f) => self.check_fun_generic(ctx, f),
-            Decl::TypeAlias { .. } | Decl::ExceptionType { .. } | Decl::ExceptionVariant { .. } => {
-                unimplemented!()
+            Decl::TypeAlias { .. } => {}
+            Decl::ExceptionType { .. } => {
+                if self.current_function.is_some() {
+                    self.push_error(TypeError::IllegalLocalExceptionType);
+                }
+            }
+            Decl::ExceptionVariant { .. } => {
+                if self.current_function.is_some() {
+                    self.push_error(TypeError::IllegalLocalOpenVariantException);
+                }
             }
         }
     }
@@ -835,7 +1195,8 @@ impl TypeChecker {
             local_ctx.extend(p.name.clone(), p.ty.clone());
         }
         self.validate_type(return_type.as_type());
-        Self::extend_ctx(local_decls, &mut local_ctx);
+        self.extend_ctx(local_decls, &mut local_ctx);
+
         for decl in local_decls {
             self.check_decl(&local_ctx, decl);
         }
@@ -907,9 +1268,13 @@ impl TypeChecker {
         self.current_function = prev_fn;
     }
 
-    fn extend_ctx(decls: &[Decl], ctx: &mut Context) {
+    fn extend_ctx(&mut self, decls: &[Decl], ctx: &mut Context) {
+        let mut exception_type_decl: Option<&Type> = None;
+        let mut exception_type_count = 0usize;
+        let mut variant_decls: Vec<(&String, &Type)> = Vec::new();
+
         for decl in decls {
-            match &decl {
+            match decl {
                 Decl::Fun(f) => {
                     let param_types = f.params.iter().map(|p| p.ty.clone()).collect();
                     let return_type = Box::new(f.return_type.as_type().clone());
@@ -925,10 +1290,48 @@ impl TypeChecker {
                     let fun_type = Type::Fun(param_types, return_type);
                     ctx.extend(f.name.clone(), fun_type);
                 }
-                Decl::ExceptionType { .. } | Decl::ExceptionVariant { .. } => {
-                    unimplemented!()
+                Decl::ExceptionType { ty } => {
+                    exception_type_count += 1;
+                    if exception_type_decl.is_none() {
+                        exception_type_decl = Some(ty);
+                    }
+                }
+                Decl::ExceptionVariant { name, ty } => {
+                    variant_decls.push((name, ty));
                 }
             }
+        }
+
+        let has_type_decl = exception_type_count > 0;
+        let has_variant_decls = !variant_decls.is_empty();
+
+        if has_type_decl && has_variant_decls {
+            self.push_error(TypeError::ConflictingExceptionDeclarations);
+        } else if exception_type_count > 1 {
+            self.push_error(TypeError::DuplicateExceptionType);
+        } else if has_variant_decls {
+            let mut seen: HashSet<&str> = HashSet::new();
+            for (name, _) in &variant_decls {
+                if !seen.insert(name.as_str()) {
+                    self.push_error(TypeError::DuplicateExceptionVariant {
+                        label: name.to_string(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ty) = exception_type_decl {
+            ctx.exception_type = Some(ty.clone());
+        } else if has_variant_decls {
+            let variant_fields = variant_decls
+                .into_iter()
+                .map(|(name, ty)| VariantFieldType {
+                    name: name.clone(),
+                    ty: Some(ty.clone()),
+                })
+                .collect();
+            ctx.exception_type = Some(Type::Variant(variant_fields));
         }
     }
 
@@ -1000,7 +1403,7 @@ impl TypeChecker {
     fn is_catch_all(pattern: &Pattern) -> bool {
         match &pattern.node {
             PatternKind::Var(_) => true,
-            PatternKind::Asc(inner, _) | PatternKind::CastAs(inner, _) => Self::is_catch_all(inner),
+            PatternKind::Asc(inner, _) => Self::is_catch_all(inner),
             _ => false,
         }
     }
@@ -1302,6 +1705,10 @@ impl TypeChecker {
                     reversed_witness.truncate(checkpoint);
                 }
                 false
+            }
+            Type::Top => {
+                reversed_witness.push("_".to_string());
+                true
             }
             _ => false,
         }
@@ -1790,9 +2197,15 @@ impl TypeChecker {
 
     pub fn check_program(mut self, prog: &Program, src: &str) -> Vec<TypeCheckError> {
         self.src = Rc::from(src);
-        let mut ctx = Context::new();
 
-        Self::extend_ctx(&prog.decls, &mut ctx);
+        self.extensions = prog
+            .extensions
+            .iter()
+            .flat_map(|ext| ext.features.iter().cloned())
+            .collect();
+
+        let mut ctx = Context::new();
+        self.extend_ctx(&prog.decls, &mut ctx);
 
         self.check_multiple_fun_definition(prog);
         self.check_missing_main(prog);

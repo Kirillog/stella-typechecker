@@ -189,7 +189,10 @@ fn suite_run() {
     let bin_path = resolve_bin(&repo_root, target_dir_override.clone())
         .expect("stella-typechecker binary should be built by cargo");
 
-    let config = Config { repo_root: repo_root.clone(), bin_path };
+    let config = Config {
+        repo_root: repo_root.clone(),
+        bin_path,
+    };
     let suite_root = repo_root.join("tests/stella_test_suite");
 
     let mut total_fail: u32 = 0;
@@ -201,7 +204,11 @@ fn suite_run() {
     entries.sort();
 
     for stage_root in entries {
-        let stage_name = stage_root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let stage_name = stage_root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         eprintln!("=== Suite run: {} ===", stage_name);
         let fails = run_all(&config, &stage_root).expect("suite should run");
         total_fail += fails;
@@ -256,7 +263,11 @@ fn run_etalon(file: &Path) -> io::Result<Option<EtalonOutput>> {
 fn extract_our_tag(output: &str) -> Option<&str> {
     let first = output.lines().next()?;
     let tag = first.split(':').next()?.trim();
-    if tag.starts_with("ERROR_") { Some(tag) } else { None }
+    if tag.starts_with("ERROR_") {
+        Some(tag)
+    } else {
+        None
+    }
 }
 
 /// Extract the error tag from the etalon's output.
@@ -317,10 +328,12 @@ fn run_compare_case(
         return Ok(());
     }
 
-    let our_output = Command::new(bin_path)
-        .arg(file)
-        .output()
-        .map_err(|e| io::Error::new(e.kind(), format!("failed to run {}: {e}", bin_path.display())))?;
+    let our_output = Command::new(bin_path).arg(file).output().map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("failed to run {}: {e}", bin_path.display()),
+        )
+    })?;
     let our_ok = our_output.status.success();
     let our_stdout = String::from_utf8_lossy(&our_output.stdout).into_owned();
     let our_stderr = String::from_utf8_lossy(&our_output.stderr).into_owned();
@@ -334,7 +347,11 @@ fn run_compare_case(
         Some(v) => v,
     };
 
-    let rel = file.strip_prefix(repo_root).unwrap_or(file).display().to_string();
+    let rel = file
+        .strip_prefix(repo_root)
+        .unwrap_or(file)
+        .display()
+        .to_string();
 
     // Phase 1: compare pass/fail
     if our_ok != etalon.ok {
@@ -353,7 +370,8 @@ fn run_compare_case(
     // Phase 2: when both report an error, compare the error tag
     if !our_ok {
         let our_tag = extract_our_tag(&our_stderr);
-        let etalon_tag = extract_etalon_tag(&etalon.stdout).or_else(|| extract_etalon_tag(&etalon.stderr));
+        let etalon_tag =
+            extract_etalon_tag(&etalon.stdout).or_else(|| extract_etalon_tag(&etalon.stderr));
         if our_tag != etalon_tag {
             *fail += 1;
             eprintln!("[DISAGREE tag] {}", rel);
@@ -434,7 +452,10 @@ fn suite_compare_etalon() {
     let bin_path = resolve_bin(&repo_root, target_dir_override)
         .expect("stella-typechecker binary should be built by cargo");
 
-    let config = Config { repo_root: repo_root.clone(), bin_path };
+    let config = Config {
+        repo_root: repo_root.clone(),
+        bin_path,
+    };
     let suite_root = repo_root.join("tests/stella_test_suite");
 
     let mut total_fail: u32 = 0;
@@ -444,11 +465,18 @@ fn suite_compare_etalon() {
         if !stage_root.is_dir() {
             continue;
         }
-        let stage_name = stage_root.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let stage_name = stage_root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         eprintln!("=== Etalon comparison: {} ===", stage_name);
         let fails = run_all_compare(&config, &stage_root).expect("etalon comparison should run");
         total_fail += fails;
     }
 
-    assert_eq!(total_fail, 0, "Etalon comparison found disagreements between our typechecker and fizruk/stella");
+    assert_eq!(
+        total_fail, 0,
+        "Etalon comparison found disagreements between our typechecker and fizruk/stella"
+    );
 }

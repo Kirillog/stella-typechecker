@@ -42,7 +42,10 @@ fn test_program_with_extension() {
         "language core; extend with #structural-patterns; fn id(x : Nat) -> Nat { return x }",
     );
     assert_eq!(prog.extensions.len(), 1);
-    assert_eq!(prog.extensions[0].names[0], "#structural-patterns");
+    assert_eq!(
+        prog.extensions[0].features[0],
+        StellaExtension::StructuralPatterns
+    );
 }
 
 #[test]

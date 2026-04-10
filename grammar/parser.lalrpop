@@ -483,7 +483,7 @@ ExtName_: String = <s:ExtName> => s.to_owned();
 
 Extension: Extension = {
     "extend" "with" <names:Comma1<ExtName_>> ";"
-        => Extension { names },
+        => Extension { features: names.iter().map(|n| StellaExtension::from(n.as_str())).collect() },
 };
 
 pub Program: Program = {

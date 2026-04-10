@@ -330,6 +330,55 @@ pub enum TypeError {
     AmbiguousPatternType {
         pat_span: Span,
     },
+
+    ExceptionTypeNotDeclared {
+        expr_span: Span,
+    },
+
+    AmbiguousThrowType {
+        expr_span: Span,
+    },
+
+    AmbiguousReferenceType {
+        expr_span: Span,
+    },
+
+    AmbiguousPanicType {
+        expr_span: Span,
+    },
+
+    NotAReference {
+        ty: Type,
+        expr_span: Span,
+    },
+
+    UnexpectedMemoryAddress {
+        expected: Type,
+        expr_span: Span,
+    },
+
+    UnexpectedReference {
+        expected: Type,
+        expr_span: Span,
+    },
+
+    UnexpectedSubtype {
+        expected: Type,
+        got: Type,
+        expr_span: Option<Span>,
+    },
+
+    DuplicateExceptionType,
+
+    DuplicateExceptionVariant {
+        label: String,
+    },
+
+    ConflictingExceptionDeclarations,
+
+    IllegalLocalExceptionType,
+
+    IllegalLocalOpenVariantException,
 }
 
 impl TypeError {
@@ -370,6 +419,14 @@ impl TypeError {
             TypeError::MissingDataForLabel { expr_span, .. } => Some(*expr_span),
             TypeError::DuplicateLetBinding { expr_span, .. } => Some(*expr_span),
             TypeError::DuplicateRecordFields { expr_span, .. } => Some(*expr_span),
+            TypeError::ExceptionTypeNotDeclared { expr_span } => Some(*expr_span),
+            TypeError::AmbiguousThrowType { expr_span } => Some(*expr_span),
+            TypeError::AmbiguousReferenceType { expr_span } => Some(*expr_span),
+            TypeError::AmbiguousPanicType { expr_span } => Some(*expr_span),
+            TypeError::NotAReference { expr_span, .. } => Some(*expr_span),
+            TypeError::UnexpectedMemoryAddress { expr_span, .. } => Some(*expr_span),
+            TypeError::UnexpectedReference { expr_span, .. } => Some(*expr_span),
+            TypeError::UnexpectedSubtype { expr_span, .. } => *expr_span,
             _ => None,
         }
     }
@@ -470,6 +527,32 @@ impl fmt::Display for TypeError {
                 write!(f, "ERROR_NONEXHAUSTIVE_LET_REC_PATTERNS:\n  missing cases: {}", missing.join(", ")),
             TypeError::AmbiguousPatternType { .. } =>
                 write!(f, "ERROR_AMBIGUOUS_PATTERN_TYPE:\n  cannot infer the type for pattern"),
+            TypeError::ExceptionTypeNotDeclared { .. } =>
+                write!(f, "ERROR_EXCEPTION_TYPE_NOT_DECLARED:\n  exceptions used without a declared exception type"),
+            TypeError::AmbiguousThrowType { .. } =>
+                write!(f, "ERROR_AMBIGUOUS_THROW_TYPE:\n  cannot determine the type of the thrown value (annotation required)"),
+            TypeError::AmbiguousReferenceType { .. } =>
+                write!(f, "ERROR_AMBIGUOUS_REFERENCE_TYPE:\n  cannot determine the type of this memory address (annotation required)"),
+            TypeError::AmbiguousPanicType { .. } =>
+                write!(f, "ERROR_AMBIGUOUS_PANIC_TYPE:\n  cannot determine the type of `panic!` (annotation required)"),
+            TypeError::NotAReference { ty, .. } =>
+                write!(f, "ERROR_NOT_A_REFERENCE:\n  expected a reference type, but got: {ty}"),
+            TypeError::UnexpectedMemoryAddress { expected, .. } =>
+                write!(f, "ERROR_UNEXPECTED_MEMORY_ADDRESS:\n  memory address cannot have non-reference type: {expected}"),
+            TypeError::UnexpectedReference { expected, .. } =>
+                write!(f, "ERROR_UNEXPECTED_REFERENCE:\n  `new(...)` cannot have non-reference type: {expected}"),
+            TypeError::UnexpectedSubtype { expected, got, .. } =>
+                write!(f, "ERROR_UNEXPECTED_SUBTYPE:\n  expected a subtype of type\n{expected}\nbut got type\n{got}"),
+            TypeError::DuplicateExceptionType =>
+                write!(f, "ERROR_DUPLICATE_EXCEPTION_TYPE:\n  more than one `exception type` declaration in the same scope"),
+            TypeError::DuplicateExceptionVariant { label } =>
+                write!(f, "ERROR_DUPLICATE_EXCEPTION_VARIANT:\n  variant label `{label}` appears more than once in exception variant declarations"),
+            TypeError::ConflictingExceptionDeclarations =>
+                write!(f, "ERROR_CONFLICTING_EXCEPTION_DECLARATIONS:\n  both `exception type` and `exception variant` declarations are present; they cannot be mixed"),
+            TypeError::IllegalLocalExceptionType =>
+                write!(f, "ERROR_ILLEGAL_LOCAL_EXCEPTION_TYPE:\n  `exception type` declaration appears in a local scope; it must be at the top level"),
+            TypeError::IllegalLocalOpenVariantException =>
+                write!(f, "ERROR_ILLEGAL_LOCAL_OPEN_VARIANT_EXCEPTION:\n  `exception variant` declaration appears in a local scope; it must be at the top level"),
         }
     }
 }
