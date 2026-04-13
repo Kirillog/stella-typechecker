@@ -1813,7 +1813,7 @@ fn test_infer_inr_with_ambiguous_type_as_bottom() {
 fn test_infer_variant_with_payload_ambiguous_type_as_bottom() {
     let errors = typecheck(
         "language core;
-         extend with #ambiguous-type-as-bottom, #variants, #let-bindings, #let-patterns;
+         extend with #ambiguous-type-as-bottom, #variants, #let-bindings, #let-patterns, #structural-subtyping;
          fn main(n : Nat) -> Nat { return let _ = <| foo = n |> in n }",
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
@@ -1823,7 +1823,7 @@ fn test_infer_variant_with_payload_ambiguous_type_as_bottom() {
 fn test_infer_variant_no_payload_ambiguous_type_as_bottom() {
     let errors = typecheck(
         "language core;
-         extend with #ambiguous-type-as-bottom, #variants, #nullary-variant-labels, #let-bindings, #let-patterns;
+         extend with #ambiguous-type-as-bottom, #variants, #nullary-variant-labels, #let-bindings, #let-patterns, #structural-subtyping;
          fn main(n : Nat) -> Nat { return let _ = <| none |> in n }",
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
