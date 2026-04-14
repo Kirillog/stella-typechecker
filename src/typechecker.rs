@@ -114,11 +114,13 @@ impl TypeChecker {
             (Type::Sum(sl, sr), Type::Sum(tl, tr)) => {
                 Self::is_subtype(sl, tl) && Self::is_subtype(sr, tr)
             }
+            // References are invariant: &T <: &U iff T <: U and U <: T
+            (Type::Ref(a), Type::Ref(b)) => Self::is_subtype(a, b) && Self::is_subtype(b, a),
             _ => false,
         }
     }
 
-    pub fn assert_is_assignable(&mut self, expected: &Type, got: &Type, expr: &Expr) {
+    pub fn assert_is_assignable_at(&mut self, expected: &Type, got: &Type, span: crate::ast::Span) {
         if self
             .extensions
             .contains(&StellaExtension::StructuralSubtyping)
@@ -127,12 +129,20 @@ impl TypeChecker {
                 self.push_error(TypeError::UnexpectedSubtype {
                     expected: expected.clone(),
                     got: got.clone(),
-                    expr_span: Some(expr.span),
+                    expr_span: Some(span),
                 });
             }
-        } else {
-            self.assert_types_equal_for_expr(expected, got, expr);
+        } else if !Self::types_equal(expected, got) {
+            self.push_error(TypeError::UnexpectedTypeForExpression {
+                expected: expected.clone(),
+                got: got.clone(),
+                expr_span: Some(span),
+            });
         }
+    }
+
+    pub fn assert_is_assignable(&mut self, expected: &Type, got: &Type, expr: &Expr) {
+        self.assert_is_assignable_at(expected, got, expr.span);
     }
 
     pub fn infer(&mut self, ctx: &Context, expr: &Expr) -> Option<Type> {
@@ -544,17 +554,18 @@ impl TypeChecker {
                     let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
                     self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
                 }
-                let mut case_types = Vec::new();
+                let mut case_type_exprs: Vec<(Type, &Expr)> = Vec::new();
                 for (match_case, local_ctx) in cases.iter().zip(local_ctxs.iter()) {
                     if let Some(case_ty) = self.infer(local_ctx, &match_case.expr) {
-                        case_types.push(case_ty);
+                        case_type_exprs.push((case_ty, &match_case.expr));
                     }
                 }
-                if let Some(first_case_ty) = case_types.first() {
-                    for case_ty in &case_types[1..] {
-                        self.assert_types_equal(first_case_ty, case_ty);
+                if let Some((first_case_ty, _)) = case_type_exprs.first() {
+                    let first_case_ty = first_case_ty.clone();
+                    for (case_ty, case_expr) in &case_type_exprs[1..] {
+                        self.assert_is_assignable(&first_case_ty, case_ty, case_expr);
                     }
-                    Some(first_case_ty.clone())
+                    Some(first_case_ty)
                 } else {
                     None
                 }
@@ -614,7 +625,7 @@ impl TypeChecker {
                 let mut catch_ctx = ctx.clone();
                 self.extend_ctx_by_pattern(&mut catch_ctx, pattern, &exn_ty);
                 let catch_ty = self.infer(&catch_ctx, catch_expr)?;
-                self.assert_types_equal(&result_ty, &catch_ty);
+                self.assert_is_assignable(&result_ty, &catch_ty, catch_expr);
                 Some(result_ty)
             }
 
@@ -721,7 +732,7 @@ impl TypeChecker {
                                 name: p.name.clone(),
                             });
                         }
-                        if p.ty != *expected_param_ty {
+                        if !Self::types_equal(&p.ty, expected_param_ty) {
                             self.push_error(TypeError::UnexpectedTypeForParameter {
                                 param: p.name.clone(),
                                 expected: expected_param_ty.clone(),
@@ -785,7 +796,7 @@ impl TypeChecker {
             ExprKind::DotTuple(e, index) => match self.infer(ctx, e) {
                 Some(Type::Tuple(elem_types)) => {
                     if *index >= 1 && *index - 1 < elem_types.len() {
-                        self.assert_types_equal(&elem_types[*index - 1], expected);
+                        self.assert_is_assignable(expected, &elem_types[*index - 1], expr);
                     } else {
                         self.push_error(TypeError::TupleIndexOutOfBounds {
                             index: *index,
@@ -2002,11 +2013,22 @@ impl TypeChecker {
             }
 
             PatternKind::Asc(inner, ascribed_ty) => {
-                self.assert_types_equal(ty, ascribed_ty);
+                self.assert_is_assignable_at(ascribed_ty, ty, pattern.span);
                 self.extend_ctx_by_pattern(ctx, inner, ascribed_ty);
             }
 
             PatternKind::CastAs(inner, target_ty) => {
+                if self
+                    .extensions
+                    .contains(&StellaExtension::StructuralSubtyping)
+                    && !Self::is_subtype(target_ty, ty)
+                {
+                    self.push_error(TypeError::UnexpectedSubtype {
+                        expected: ty.clone(),
+                        got: *target_ty.clone(),
+                        expr_span: Some(pattern.span),
+                    });
+                }
                 self.extend_ctx_by_pattern(ctx, inner, target_ty);
             }
 
