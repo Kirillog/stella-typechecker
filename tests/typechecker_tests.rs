@@ -2,7 +2,7 @@ use stella_typechecker::parser;
 use stella_typechecker::type_error::{TypeCheckError, TypeError};
 use stella_typechecker::typechecker::TypeChecker;
 
-fn run_etalon(src: &str) -> Option<bool> {
+fn run_etalon(src: &str) -> Option<Result<(), Vec<String>>> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -32,7 +32,26 @@ fn run_etalon(src: &str) -> Option<bool> {
     let output = child
         .wait_with_output()
         .expect("docker wait_with_output failed");
-    Some(output.status.success())
+
+    if output.status.success() {
+        Some(Ok(()))
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let tags: Vec<String> = stdout
+            .lines()
+            .filter_map(|line| {
+                if let Some(rest) = line.strip_prefix("Type Error Tag: [") {
+                    return rest.strip_suffix(']').map(str::to_string);
+                }
+                if let Some(rest) = line.strip_prefix("Unsupported Syntax Error: ") {
+                    return Some(rest.trim().to_string());
+                }
+                None
+            })
+            .collect();
+        Some(Err(tags))
+    }
 }
 
 fn typecheck(src: &str) -> Vec<TypeCheckError> {
@@ -41,8 +60,9 @@ fn typecheck(src: &str) -> Vec<TypeCheckError> {
         .expect("parse failed");
     let errors = TypeChecker::new().check_program(&prog, src);
 
-    if let Some(etalon_ok) = run_etalon(src) {
+    if let Some(etalon_result) = run_etalon(src) {
         let our_ok = errors.is_empty();
+        let etalon_ok = etalon_result.is_ok();
         assert_eq!(
             our_ok,
             etalon_ok,
@@ -51,6 +71,16 @@ fn typecheck(src: &str) -> Vec<TypeCheckError> {
             if etalon_ok { "OK" } else { "ERROR" },
             src
         );
+        if let Err(etalon_tags) = &etalon_result {
+            let our_tag = errors
+                .first()
+                .and_then(|e| e.error.to_string().split(':').next().map(str::to_string))
+                .unwrap_or_default();
+            assert!(
+                etalon_tags.is_empty() || etalon_tags.contains(&our_tag),
+                "error tag mismatch: ours={our_tag} etalon={etalon_tags:?} for:\n{src}"
+            );
+        }
     }
 
     errors
@@ -130,7 +160,7 @@ fn test_error_not_a_function() {
 #[test]
 fn test_error_not_a_tuple() {
     let errors =
-        typecheck("language core; extend with #tuples; fn main(n : Nat) -> Nat { return n.0 }");
+        typecheck("language core; extend with #tuples; fn main(n : Nat) -> Nat { return n.1 }");
     assert!(
         has_error(&errors, |e| matches!(e, TypeError::NotATuple { .. })),
         "expected NotATuple, got: {errors:?}"
@@ -341,7 +371,7 @@ fn test_error_ambiguous_list() {
 
 #[test]
 fn test_error_ambiguous_tuple() {
-    let errors = typecheck("language core; extend with #sum-types, #tuples; fn main(n : Nat) -> Nat { return (inl(0)).0 }");
+    let errors = typecheck("language core; extend with #sum-types, #tuples; fn main(n : Nat) -> Nat { return (inl(0)).1 }");
     assert!(
         has_error(&errors, |e| matches!(e, TypeError::AmbiguousTuple { .. })),
         "expected AmbiguousTuple, got: {errors:?}"
@@ -1684,7 +1714,6 @@ fn test_nested_function_exception_type_does_not_leak_outward() {
 
 #[test]
 fn test_subtyping_fun_wrong_return_type_error() {
-    // fn(Nat)->Nat is NOT a subtype of fn(Nat)->Bool — exercises is_subtype for Fun (returns false)
     let errors = typecheck(
         "language core;
          extend with #structural-subtyping, #multiparameter-functions;
@@ -1703,7 +1732,6 @@ fn test_subtyping_fun_wrong_return_type_error() {
 
 #[test]
 fn test_subtyping_fun_wrong_param_type_error() {
-    // fn(Bool)->Nat is NOT a subtype of fn(Nat)->Nat — exercises is_subtype for Fun (param check)
     let errors = typecheck(
         "language core;
          extend with #structural-subtyping, #multiparameter-functions;
@@ -2354,4 +2382,95 @@ fn test_infer_throw_with_ambiguous_type_as_bottom() {
          fn main(n : Nat) -> Nat { return throw(n) }",
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_subtyping_missing_record_fields_emits_missing_record_fields_not_unexpected_subtype() {
+    let errors = typecheck(
+        "language core;
+         extend with #records, #let-bindings, #let-patterns, #structural-subtyping;
+         fn main(n : Nat) -> { a : Nat, b : Bool } {
+           return let x = { a = 0 } in x
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::MissingRecordFields { missing, .. } if missing.contains(&"b".to_string())
+        )),
+        "expected MissingRecordFields(b), got: {errors:?}"
+    );
+    assert!(
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedSubtype { .. }
+        )),
+        "should not emit UnexpectedSubtype when MissingRecordFields applies, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_subtyping_record_ok_when_extra_fields_present() {
+    let errors = typecheck(
+        "language core;
+         extend with #records, #let-bindings, #let-patterns, #natural-literals, #structural-subtyping;
+         fn main(n : Nat) -> { a : Nat } {
+           return let x = { a = 1, b = 2 } in x
+         }",
+    );
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}
+
+#[test]
+fn test_subtyping_tuple_length_mismatch_emits_unexpected_tuple_length() {
+    let errors = typecheck(
+        "language core;
+         extend with #tuples, #let-bindings, #let-patterns, #natural-literals, #structural-subtyping;
+         fn main(n : Nat) -> {Nat, Nat, Nat} {
+           return let x = {1, 2} in x
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedTupleLength {
+                expected: 3,
+                got: 2,
+                ..
+            }
+        )),
+        "expected UnexpectedTupleLength(3, 2), got: {errors:?}"
+    );
+    assert!(
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedSubtype { .. }
+        )),
+        "should not emit UnexpectedSubtype when UnexpectedTupleLength applies, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_subtyping_variant_extra_label_emits_unexpected_variant_label() {
+    let errors = typecheck(
+        "language core;
+         extend with #variants, #let-bindings, #let-patterns, #structural-subtyping;
+         fn main(n : Nat) -> <| a : Nat |> {
+           return let x = <| b = n |> as <| a : Nat, b : Nat |> in x
+         }",
+    );
+    assert!(
+        has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedVariantLabel { label, .. } if label == "b"
+        )),
+        "expected UnexpectedVariantLabel(b), got: {errors:?}"
+    );
+    assert!(
+        !has_error(&errors, |e| matches!(
+            e,
+            TypeError::UnexpectedSubtype { .. }
+        )),
+        "should not emit UnexpectedSubtype when UnexpectedVariantLabel applies, got: {errors:?}"
+    );
 }

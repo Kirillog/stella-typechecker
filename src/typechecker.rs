@@ -126,6 +126,59 @@ impl TypeChecker {
             .contains(&StellaExtension::StructuralSubtyping)
         {
             if !Self::is_subtype(got, expected) {
+                match (got, expected) {
+                    (Type::Record(got_fields), Type::Record(exp_fields)) => {
+                        let missing: Vec<String> = exp_fields
+                            .iter()
+                            .filter(|ef| !got_fields.iter().any(|gf| gf.name == ef.name))
+                            .map(|ef| ef.name.clone())
+                            .collect();
+                        if !missing.is_empty() {
+                            self.push_error(TypeError::MissingRecordFields {
+                                missing,
+                                expr_span: span,
+                            });
+                            return;
+                        }
+                    }
+
+                    (Type::Tuple(got_elems), Type::Tuple(exp_elems))
+                        if got_elems.len() != exp_elems.len() =>
+                    {
+                        self.push_error(TypeError::UnexpectedTupleLength {
+                            expected: exp_elems.len(),
+                            got: got_elems.len(),
+                            expr_span: span,
+                        });
+                        return;
+                    }
+
+                    (Type::Variant(got_labels), Type::Variant(exp_labels)) => {
+                        if let Some(extra) = got_labels
+                            .iter()
+                            .find(|gl| !exp_labels.iter().any(|el| el.name == gl.name))
+                        {
+                            self.push_error(TypeError::UnexpectedVariantLabel {
+                                label: extra.name.clone(),
+                                variant_type: expected.clone(),
+                                expr_span: Some(span),
+                            });
+                            return;
+                        }
+                    }
+
+                    (Type::Fun(got_params, _), Type::Fun(exp_params, _))
+                        if got_params.len() != exp_params.len() =>
+                    {
+                        self.push_error(TypeError::IncorrectNumberOfArguments {
+                            expected: exp_params.len(),
+                            got: got_params.len(),
+                            expr_span: span,
+                        });
+                        return;
+                    }
+                    _ => {}
+                }
                 self.push_error(TypeError::UnexpectedSubtype {
                     expected: expected.clone(),
                     got: got.clone(),
@@ -374,9 +427,17 @@ impl TypeChecker {
             }
 
             ExprKind::DotTuple(e, index) => {
+                if *index < 1 {
+                    self.push_error(TypeError::TupleIndexOutOfBounds {
+                        index: *index,
+                        length: 0,
+                        expr_span: e.span,
+                    });
+                    return None;
+                }
                 let tuple_ty = self.infer(ctx, e)?;
                 match tuple_ty {
-                    Type::Tuple(elem_types) if *index >= 1 && *index - 1 < elem_types.len() => {
+                    Type::Tuple(elem_types) if *index - 1 < elem_types.len() => {
                         Some(elem_types[*index - 1].clone())
                     }
                     Type::Tuple(elem_types) => {
@@ -550,15 +611,16 @@ impl TypeChecker {
                     self.extend_ctx_by_pattern(&mut local_ctx, &match_case.pattern, &scrutinee_ty);
                     local_ctxs.push(local_ctx);
                 }
-                if self.errors.len() == errors_before {
-                    let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
-                    self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
-                }
+                let pattern_errors = self.errors.len() > errors_before;
                 let mut case_type_exprs: Vec<(Type, &Expr)> = Vec::new();
                 for (match_case, local_ctx) in cases.iter().zip(local_ctxs.iter()) {
                     if let Some(case_ty) = self.infer(local_ctx, &match_case.expr) {
                         case_type_exprs.push((case_ty, &match_case.expr));
                     }
+                }
+                if !pattern_errors {
+                    let patterns: Vec<&Pattern> = cases.iter().map(|c| &c.pattern).collect();
+                    self.check_match_exhaustiveness(&scrutinee_ty, &patterns, expr);
                 }
                 if let Some((first_case_ty, _)) = case_type_exprs.first() {
                     let first_case_ty = first_case_ty.clone();
@@ -793,24 +855,34 @@ impl TypeChecker {
                 }),
             },
 
-            ExprKind::DotTuple(e, index) => match self.infer(ctx, e) {
-                Some(Type::Tuple(elem_types)) => {
-                    if *index >= 1 && *index - 1 < elem_types.len() {
-                        self.assert_is_assignable(expected, &elem_types[*index - 1], expr);
-                    } else {
-                        self.push_error(TypeError::TupleIndexOutOfBounds {
-                            index: *index,
-                            length: elem_types.len(),
-                            expr_span: e.span,
-                        });
-                    }
+            ExprKind::DotTuple(e, index) => {
+                if *index < 1 {
+                    self.push_error(TypeError::TupleIndexOutOfBounds {
+                        index: *index,
+                        length: 0,
+                        expr_span: e.span,
+                    });
+                    return;
                 }
-                Some(tuple_ty) => self.push_error(TypeError::NotATuple {
-                    ty: tuple_ty,
-                    expr_span: e.span,
-                }),
-                None => self.push_error(TypeError::AmbiguousTuple { expr_span: e.span }),
-            },
+                match self.infer(ctx, e) {
+                    Some(Type::Tuple(elem_types)) => {
+                        if *index - 1 < elem_types.len() {
+                            self.assert_is_assignable(expected, &elem_types[*index - 1], expr);
+                        } else {
+                            self.push_error(TypeError::TupleIndexOutOfBounds {
+                                index: *index,
+                                length: elem_types.len(),
+                                expr_span: e.span,
+                            });
+                        }
+                    }
+                    Some(tuple_ty) => self.push_error(TypeError::NotATuple {
+                        ty: tuple_ty,
+                        expr_span: e.span,
+                    }),
+                    None => self.push_error(TypeError::AmbiguousTuple { expr_span: e.span }),
+                }
+            }
 
             ExprKind::Record(bindings) => match expected {
                 Type::Record(field_types) => {
