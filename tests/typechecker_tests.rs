@@ -1299,14 +1299,14 @@ fn test_reference_assign_well_typed() {
 }
 
 #[test]
-fn test_reference_not_a_reference_deref() {
+fn test_reference_unexpected_type_deref() {
     let errors = typecheck(
         "language core; extend with #references;
          fn main(n : Nat) -> Nat { return *n }",
     );
     assert!(
-        has_error(&errors, |e| matches!(e, TypeError::NotAReference { .. })),
-        "expected NotAReference for deref of non-reference, got: {errors:?}"
+        has_error(&errors, |e| matches!(e, TypeError::UnexpectedTypeForExpression { .. })),
+        "expected UnexpectedTypeForExpression for deref of non-reference, got: {errors:?}"
     );
 }
 

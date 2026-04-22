@@ -500,13 +500,28 @@ impl TypeChecker {
                 None => None,
             },
 
-            ExprKind::Inl(inner) | ExprKind::Inr(inner) => {
+            ExprKind::Inl(inner) => {
                 if self
                     .extensions
                     .contains(&StellaExtension::AmbiguousTypeAsBottom)
                 {
                     let inner_ty = self.infer(ctx, inner)?;
                     Some(Type::Sum(Box::new(inner_ty), Box::new(Type::Bottom)))
+                } else {
+                    self.push_error(TypeError::AmbiguousSumType {
+                        expr_span: expr.span,
+                    });
+                    None
+                }
+            }
+
+            ExprKind::Inr(inner) => {
+                if self
+                    .extensions
+                    .contains(&StellaExtension::AmbiguousTypeAsBottom)
+                {
+                    let inner_ty = self.infer(ctx, inner)?;
+                    Some(Type::Sum(Box::new(Type::Bottom), Box::new(inner_ty)))
                 } else {
                     self.push_error(TypeError::AmbiguousSumType {
                         expr_span: expr.span,
@@ -794,7 +809,17 @@ impl TypeChecker {
                                 name: p.name.clone(),
                             });
                         }
-                        if !Self::types_equal(&p.ty, expected_param_ty) {
+                        if self
+                            .extensions
+                            .contains(&StellaExtension::StructuralSubtyping)
+                        {
+                            // Contravariant check: expected_param_ty <: declared p.ty
+                            self.assert_is_assignable_at(
+                                &p.ty,
+                                expected_param_ty,
+                                expr.span,
+                            );
+                        } else if !Self::types_equal(&p.ty, expected_param_ty) {
                             self.push_error(TypeError::UnexpectedTypeForParameter {
                                 param: p.name.clone(),
                                 expected: expected_param_ty.clone(),
@@ -1175,35 +1200,32 @@ impl TypeChecker {
                 if matches!(e.node, ExprKind::ConstMemory(_)) {
                     return;
                 }
+                let saved_errors = self.errors.len();
                 if let Some(ref_ty) = self.infer(ctx, e) {
                     match ref_ty {
                         Type::Ref(inner) => {
                             self.assert_is_assignable(expected, &inner, expr);
                         }
+                        Type::Tuple(_) => {
+                            self.push_error(TypeError::UnexpectedTuple {
+                                expected: expected.clone(),
+                                expr_span: expr.span,
+                            });
+                        }
                         ty => {
-                            self.push_error(TypeError::NotAReference {
-                                ty,
-                                expr_span: e.span,
+                            self.push_error(TypeError::UnexpectedTypeForExpression {
+                                expected: Type::Ref(Box::new(expected.clone())),
+                                got: ty,
+                                expr_span: Some(e.span),
                             });
                         }
                     }
-                }
-            }
-
-            ExprKind::Assign(lhs, rhs) => {
-                self.assert_types_equal(expected, &Type::Unit);
-                if let Some(lhs_ty) = self.infer(ctx, lhs) {
-                    match lhs_ty {
-                        Type::Ref(inner) => {
-                            self.check(ctx, rhs, &inner);
-                        }
-                        ty => {
-                            self.push_error(TypeError::NotAReference {
-                                ty,
-                                expr_span: lhs.span,
-                            });
-                        }
-                    }
+                } else {
+                    // infer failed (e.g. ConstMemory inside if-branches without
+                    // AmbiguousTypeAsBottom); roll back any errors pushed by infer
+                    // and re-check e in check mode so that context propagates down.
+                    self.errors.truncate(saved_errors);
+                    self.check(ctx, e, &Type::Ref(Box::new(expected.clone())));
                 }
             }
 
